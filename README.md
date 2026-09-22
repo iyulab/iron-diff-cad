@@ -20,7 +20,16 @@ Input and output are expressed in the [uncad-model](https://github.com/iyulab/un
 
 ## Status
 
-Pre-implementation. No code yet. The design principles are settled in [docs/principles.md](docs/principles.md), and the shape of what the library returns -- kinds of change, field-level detail, tolerance, matching modes, ordering, JSON -- is the contract in [docs/change-set.md](docs/change-set.md). Read both before proposing anything.
+0.x. `diff(&before, &after, options)` matches two states by their entity reference IDs and returns the exact change set -- added, removed and modified entities, every differing field of a modified one with its delta and a within/beyond verdict against an explicit tolerance -- in a fixed order, byte for byte the same every time. Matching by geometry, for two revisions that share no references, is not built yet. The rules are in [docs/principles.md](docs/principles.md); the shape of what comes back is the contract in [docs/change-set.md](docs/change-set.md). Read both before proposing anything.
+
+```rust
+let before: uncad_model::CadDatabase = /* from a parser, or from its JSON */;
+let after = /* the same drawing after an operation */;
+let set = iron_diff_cad::diff(&before, &after, iron_diff_cad::DiffOptions::default());
+for change in &set.changes {
+    println!("{}", serde_json::to_string(change)?);
+}
+```
 
 ## License
 

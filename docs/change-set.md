@@ -29,12 +29,14 @@ Every entry also carries the **provenance** of both entities involved and a **co
 
 ## 2. Tolerance
 
-Every numeric comparison uses a tolerance the caller stated or a default the result states -- there is no hidden epsilon. Lengths and angles have separate tolerances (`length` and `angle`), in the drawing's own units, since the model carries no unit.
+Every numeric comparison uses a tolerance the caller stated or a default the result states -- there is no hidden epsilon (the defaults are `length = 1e-6` and `angle = 1e-9`). Lengths and angles have separate tolerances (`length` and `angle`), in the drawing's own units, since the model carries no unit. A field is an angle when the model documents it as one, which its name says: `rotation`, `start_angle`, `end_angle`, `angle`. Every other numeric field, including dimensionless ones such as scale factors and ratios, is compared with the length tolerance.
 
 The inequality is fixed:
 
 - `|delta| < tolerance` is `WITHIN`;
 - anything else, including `|delta| == tolerance`, is `BEYOND`. Something that moved by exactly the tolerance has moved.
+
+The comparison is made on the `f64` difference as computed, with no rounding: a caller who wants the boundary to fall on a particular value states a tolerance that value can reach exactly in binary floating point.
 
 The tolerances that were applied are written into the change set's header, so the same change set cannot be read against two different tolerances.
 
@@ -53,7 +55,7 @@ The same two states produce the same change set in the same order, byte for byte
 
 - In `REFERENCE` mode, entries are ordered by reference ID, ascending.
 - In `GEOMETRY` mode, entries are ordered by entity type, then by the entity's representative point compared lexicographically on (x, y, z), then by its second point where the type has one.
-- Within a `MODIFIED` entry, fields are ordered by field path, ascending.
+- Within a `MODIFIED` entry, fields are ordered by field path, ascending (plain string order, so `vertices[10]` sorts before `vertices[2]`).
 
 No hash-based collection takes part in producing the output.
 
