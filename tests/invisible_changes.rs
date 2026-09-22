@@ -7,7 +7,7 @@
 //! exactly what it reports.
 
 use iron_diff_cad::{diff, Change, DiffOptions, Matching, Verdict};
-use uncad_model::model::{Entity, EntityId, Ref};
+use uncad_model::model::{Entity, EntityId, Ref, TextOverride};
 use uncad_model::CadDatabase;
 
 fn g1() -> CadDatabase {
@@ -17,6 +17,11 @@ fn g1() -> CadDatabase {
 
 fn g6() -> CadDatabase {
     serde_json::from_str(include_str!("golden/g6.expected.json"))
+        .expect("the golden model deserializes")
+}
+
+fn g5() -> CadDatabase {
+    serde_json::from_str(include_str!("golden/g5.expected.json"))
         .expect("the golden model deserializes")
 }
 
@@ -211,5 +216,110 @@ fn a_block_edit_cancelled_by_its_instance_is_reported_on_both() {
     assert_eq!(
         field_paths(&set.changes[1]),
         ["scale.x", "scale.y", "scale.z"]
+    );
+}
+
+/// A3: the text a dimension displays is changed, and nothing else is.
+///
+/// This is the one invisible change that is visible -- the drawing says a
+/// different number afterwards -- and that is the point: a comparison of
+/// renders sees *a* difference in the text, and has no way to say that the
+/// measurement underneath it did not move. The change set says both: one
+/// entity, one field, the text before and after, and no change at all to the
+/// measurement the dimension states.
+#[test]
+fn a_dimension_text_override_change_is_exactly_that_field() {
+    let before = g5();
+    // G5's fourth dimension: measurement 120, text "125" -- a drawing whose
+    // text already disagrees with what it measured.
+    let id = first_of(&before, |e| {
+        matches!(e, Entity::Dimension(d)
+            if matches!(&d.text_override, TextOverride::Literal(t) if t == "125"))
+    });
+    let mut after = before.clone();
+    for e in entity_mut(&mut after, id) {
+        if let Entity::Dimension(d) = e {
+            d.text_override = TextOverride::Literal("130".to_string());
+        }
+    }
+
+    let set = diff(&before, &after, DiffOptions::default());
+    assert_eq!(kinds(&set), ["MODIFIED"]);
+    assert_eq!(field_paths(&set.changes[0]), ["text_override.data"]);
+    let Change::Modified(m) = &set.changes[0] else {
+        unreachable!()
+    };
+    assert_eq!(m.id, id);
+    assert_eq!(m.fields[0].before, serde_json::json!("125"));
+    assert_eq!(m.fields[0].after, serde_json::json!("130"));
+
+    // What the dimension measured is untouched, and the change set says so
+    // by not mentioning it.
+    let Entity::Dimension(b) = before
+        .entities
+        .iter()
+        .find(|e| e.common().id == id)
+        .expect("the dimension is there")
+    else {
+        unreachable!()
+    };
+    assert_eq!(b.measurement, Some(120.0));
+    assert!(!field_paths(&set.changes[0])
+        .iter()
+        .any(|p| p.contains("measurement")));
+}
+
+/// The same edit, the other way round: the measurement moves and the text
+/// does not. A drawing that says "125" both before and after, measuring
+/// something else -- the case where trusting the text is trusting the wrong
+/// value.
+#[test]
+fn a_measurement_change_under_an_unchanged_text_is_reported() {
+    let before = g5();
+    let id = first_of(&before, |e| {
+        matches!(e, Entity::Dimension(d)
+            if matches!(&d.text_override, TextOverride::Literal(t) if t == "125"))
+    });
+    let mut after = before.clone();
+    for e in entity_mut(&mut after, id) {
+        if let Entity::Dimension(d) = e {
+            d.measurement = Some(121.0);
+        }
+    }
+
+    let set = diff(&before, &after, DiffOptions::default());
+    assert_eq!(kinds(&set), ["MODIFIED"]);
+    assert_eq!(field_paths(&set.changes[0]), ["measurement"]);
+    let Change::Modified(m) = &set.changes[0] else {
+        unreachable!()
+    };
+    assert_eq!(m.fields[0].before, serde_json::json!(120.0));
+    assert_eq!(m.fields[0].after, serde_json::json!(121.0));
+}
+
+/// A drawing that stops overriding its text: the same change set shape, but
+/// the field that moved is the *kind* of override, not its text. The two
+/// spellings the model folds together (`""` and `<>`) cannot produce this --
+/// which is what folding them was for.
+#[test]
+fn dropping_a_text_override_is_reported_as_the_kind_changing() {
+    let before = g5();
+    let id = first_of(&before, |e| {
+        matches!(e, Entity::Dimension(d)
+            if matches!(&d.text_override, TextOverride::Literal(t) if t == "125"))
+    });
+    let mut after = before.clone();
+    for e in entity_mut(&mut after, id) {
+        if let Entity::Dimension(d) = e {
+            d.text_override = TextOverride::Measured;
+        }
+    }
+
+    let set = diff(&before, &after, DiffOptions::default());
+    assert_eq!(kinds(&set), ["MODIFIED"]);
+    let paths = field_paths(&set.changes[0]);
+    assert!(
+        paths.contains(&"text_override.type"),
+        "the kind of override is what moved: {paths:?}"
     );
 }
