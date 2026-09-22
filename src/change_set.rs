@@ -6,14 +6,15 @@ use serde::{Deserialize, Serialize};
 use uncad_model::model::{Confidence, EntityId, Origin};
 
 /// Which key matched entities of the two states.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum Matching {
     /// The two states share entity reference IDs, and those were the key,
     /// exactly as the model issued them.
+    #[default]
     Reference,
     /// The two states share no references; entities were matched by type
-    /// and shape within tolerance. Not produced yet.
+    /// and shape within tolerance, and only where the match is certain.
     Geometry,
 }
 
@@ -82,7 +83,14 @@ pub struct EntityRecord {
 /// An entity present in both states with at least one differing field.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Modified {
+    /// The entity's reference ID in the first state.
     pub id: EntityId,
+    /// Its counterpart's reference ID in the second state, when the two
+    /// differ -- which is only under geometric matching, where the states
+    /// share no references. Absent under reference matching, where the two
+    /// are the same ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counterpart: Option<EntityId>,
     pub entity_type: String,
     /// The provenance of the entity before and after.
     pub provenance: [Origin; 2],
@@ -94,11 +102,15 @@ pub struct Modified {
     pub fields: Vec<FieldChange>,
 }
 
-/// An entity whose counterpart could not be decided with certainty. Only
-/// geometric matching produces it.
+/// An entity of the first state whose counterpart in the second could not
+/// be decided with certainty. Only geometric matching produces it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Unknown {
+    /// The entity's reference ID in the first state.
     pub id: EntityId,
+    /// The entities of the second state that match it within tolerance,
+    /// by their reference IDs, ascending. Never empty: an entity with no
+    /// candidate is `REMOVED`.
     pub candidates: Vec<EntityId>,
     pub reason: String,
 }
@@ -129,7 +141,9 @@ impl Change {
 pub struct ChangeSet {
     pub matching: Matching,
     pub tolerance: Tolerance,
-    /// Ordered by entity reference ID, ascending.
+    /// Ordered by entity reference ID, ascending, under reference matching;
+    /// by entity type, representative point and second point under
+    /// geometric matching (contract, section 4).
     pub changes: Vec<Change>,
 }
 

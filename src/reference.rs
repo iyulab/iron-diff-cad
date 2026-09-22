@@ -7,16 +7,10 @@ use std::collections::BTreeMap;
 use uncad_model::model::{Entity, EntityId};
 use uncad_model::CadDatabase;
 
-/// Options for [`diff`].
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct DiffOptions {
-    pub tolerance: Tolerance,
-}
-
 /// Every entity of a drawing, by reference ID: the drawing's own entities
 /// and every block definition's. An entity that appears in both places (a
 /// model-space entity is also listed under its block) is one entity.
-fn by_id(db: &CadDatabase) -> BTreeMap<EntityId, &Entity> {
+pub(crate) fn by_id(db: &CadDatabase) -> BTreeMap<EntityId, &Entity> {
     let mut map = BTreeMap::new();
     let in_blocks = db
         .tables
@@ -29,7 +23,7 @@ fn by_id(db: &CadDatabase) -> BTreeMap<EntityId, &Entity> {
     map
 }
 
-fn record(e: &Entity) -> EntityRecord {
+pub(crate) fn record(e: &Entity) -> EntityRecord {
     EntityRecord {
         id: e.common().id,
         entity_type: e.type_name().to_string(),
@@ -40,7 +34,7 @@ fn record(e: &Entity) -> EntityRecord {
 
 /// The exact change set between `before` and `after`, matched by reference
 /// ID. Neither input is modified; the result is a new value, ordered by ID.
-pub fn diff(before: &CadDatabase, after: &CadDatabase, options: DiffOptions) -> ChangeSet {
+pub fn diff(before: &CadDatabase, after: &CadDatabase, tolerance: Tolerance) -> ChangeSet {
     let b = by_id(before);
     let a = by_id(after);
     let mut ids: Vec<EntityId> = b.keys().chain(a.keys()).copied().collect();
@@ -58,7 +52,7 @@ pub fn diff(before: &CadDatabase, after: &CadDatabase, options: DiffOptions) -> 
                 }
                 let bx = serde_json::to_value(x).expect("the model serializes");
                 let ay = serde_json::to_value(y).expect("the model serializes");
-                let fields = fields::compare(&bx, &ay, options.tolerance);
+                let fields = fields::compare(&bx, &ay, tolerance);
                 if fields.is_empty() {
                     // Different as Rust values but not as compared fields
                     // (e.g. a non-finite float): nothing to report.
@@ -66,6 +60,7 @@ pub fn diff(before: &CadDatabase, after: &CadDatabase, options: DiffOptions) -> 
                 }
                 changes.push(Change::Modified(Modified {
                     id,
+                    counterpart: None,
                     entity_type: y.type_name().to_string(),
                     provenance: [x.common().origin, y.common().origin],
                     confidence: x.common().confidence.min(y.common().confidence),
@@ -78,7 +73,7 @@ pub fn diff(before: &CadDatabase, after: &CadDatabase, options: DiffOptions) -> 
 
     ChangeSet {
         matching: Matching::Reference,
-        tolerance: options.tolerance,
+        tolerance,
         changes,
     }
 }

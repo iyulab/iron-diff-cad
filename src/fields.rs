@@ -15,6 +15,27 @@ use std::collections::BTreeMap;
 /// field is compared with the length tolerance.
 const ANGLE_FIELDS: [&str; 4] = ["rotation", "start_angle", "end_angle", "angle"];
 
+/// Fields of `common` that are identity, not content: the reference ID is
+/// the matching key under reference matching, and the source handle is
+/// what the model issued that ID from. Neither is ever a compared field.
+const IDENTITY_FIELDS: [&str; 2] = ["id", "source_handle"];
+
+/// An entity's JSON form without its `common` block and type tag: the
+/// geometry and values that say what the entity *is*, as opposed to where
+/// it came from and what it is called. What geometric matching compares.
+pub fn shape(entity: &Value) -> Value {
+    match entity {
+        Value::Object(fields) => Value::Object(
+            fields
+                .iter()
+                .filter(|(k, _)| k.as_str() != "common" && k.as_str() != "type")
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
 /// The fields that differ between `before` and `after`, ordered by path.
 pub fn compare(before: &Value, after: &Value, tolerance: Tolerance) -> Vec<FieldChange> {
     let mut out = BTreeMap::new();
@@ -39,7 +60,7 @@ fn walk(
 ) {
     match (before, after) {
         (Value::Object(b), Value::Object(a)) => {
-            // The reference ID is the matching key, never a compared field.
+            // Identity fields are never compared -- see IDENTITY_FIELDS.
             let mut keys: Vec<&String> = b.keys().chain(a.keys()).collect();
             keys.sort();
             keys.dedup();
@@ -52,7 +73,7 @@ fn walk(
                         ck.sort();
                         ck.dedup();
                         for c in ck {
-                            if c == "id" {
+                            if IDENTITY_FIELDS.contains(&c.as_str()) {
                                 continue;
                             }
                             walk(
@@ -147,12 +168,16 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn numeric_fields_get_a_delta_and_a_verdict_and_the_id_is_never_compared() {
-        let before = json!({"common": {"id": 1, "layer": {"type": "RESOLVED", "data": "0"}}, "radius": 5.0, "center": {"x": 1.0, "y": 2.0, "z": 0.0}});
-        let after = json!({"common": {"id": 2, "layer": {"type": "RESOLVED", "data": "0"}}, "radius": 6.0, "center": {"x": 1.0, "y": 2.0000001, "z": 0.0}});
+    fn numeric_fields_get_a_delta_and_a_verdict_and_identity_is_never_compared() {
+        let before = json!({"common": {"id": 1, "source_handle": {"type": "RESOLVED", "data": "1"}, "layer": {"type": "RESOLVED", "data": "0"}}, "radius": 5.0, "center": {"x": 1.0, "y": 2.0, "z": 0.0}});
+        let after = json!({"common": {"id": 2, "source_handle": {"type": "RESOLVED", "data": "2"}, "layer": {"type": "RESOLVED", "data": "0"}}, "radius": 6.0, "center": {"x": 1.0, "y": 2.0000001, "z": 0.0}});
         let changes = compare(&before, &after, Tolerance::default());
         let paths: Vec<&str> = changes.iter().map(|c| c.path.as_str()).collect();
-        assert_eq!(paths, ["center.y", "radius"], "ordered by path, id skipped");
+        assert_eq!(
+            paths,
+            ["center.y", "radius"],
+            "ordered by path, id and source handle skipped"
+        );
         assert_eq!(changes[0].verdict, Verdict::Within);
         assert_eq!(changes[1].verdict, Verdict::Beyond);
         assert_eq!(changes[1].delta, Some(1.0));
@@ -186,6 +211,15 @@ mod tests {
         assert!(changes
             .iter()
             .all(|c| c.delta.is_none() && c.verdict == Verdict::Beyond));
+    }
+
+    #[test]
+    fn the_shape_is_everything_but_the_common_block_and_the_tag() {
+        let entity = json!({"type": "CIRCLE", "common": {"id": 1, "layer": "0"}, "radius": 5.0, "center": {"x": 1.0, "y": 2.0, "z": 0.0}});
+        assert_eq!(
+            shape(&entity),
+            json!({"radius": 5.0, "center": {"x": 1.0, "y": 2.0, "z": 0.0}})
+        );
     }
 
     #[test]

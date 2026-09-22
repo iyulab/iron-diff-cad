@@ -13,7 +13,7 @@ Every entry in a change set is a verdict about one entity. The kinds are a close
 | `ADDED` | The entity is in the second state and has no counterpart in the first |
 | `REMOVED` | The entity is in the first state and has no counterpart in the second |
 | `MODIFIED` | The entity is in both, and at least one of its fields differs |
-| `UNKNOWN` | The library could not decide, with certainty, which entity of the second state (if any) corresponds to this one. It lists the candidates and the reason. This is a normal result, not an error |
+| `UNKNOWN` | The library could not decide, with certainty, which entity of the second state corresponds to this entity of the first. It lists the candidates (never empty: an entity with no candidate is `REMOVED`) and the reason. This is a normal result, not an error |
 
 A confident wrong match would hide a real change, so an uncertain match is never resolved by picking the likeliest pair. Where a human would see "moved", a comparison without shared references reports `REMOVED` plus `ADDED`; that is the intended cost.
 
@@ -25,7 +25,9 @@ A `MODIFIED` entry carries the list of fields that were compared, one item per f
 - **Non-numeric fields** (names, text, flags): `before` and `after`, and they appear only when they differ. There is no tolerance and no delta.
 - **Reference fields** (a layer, a block, a style -- three-state values in the model: resolved, absent, unresolved-with-handle): a change of the resolved value *or* of the state is a field change, reported with the two three-state values verbatim. A reference that stopped resolving is never swallowed as "no value".
 
-Every entry also carries the **provenance** of both entities involved and a **confidence**, which is the lower of the two (a change between two low-confidence values is a low-confidence change, and no change is ever reported with a higher confidence than the entities it involves).
+Two fields are identity, not content, and are never compared: the reference ID (`common.id`) and the handle it was issued from (`common.source_handle`). Under reference matching they are the key; under geometric matching they differ for every pair by definition.
+
+Every entry also carries the **provenance** of both entities involved and a **confidence**, which is the lower of the two (a change between two low-confidence values is a low-confidence change, and no change is ever reported with a higher confidence than the entities it involves). Under geometric matching a `MODIFIED` entry also carries `counterpart`, the matched entity's reference ID in the second state; under reference matching the two IDs are the same and the field is absent.
 
 ## 2. Tolerance
 
@@ -49,12 +51,18 @@ The tolerances that were applied are written into the change set's header, so th
 
 The header names the mode that produced the change set, so the same output cannot be read in two meanings.
 
+### Geometric matching
+
+An entity's **shape** is every field of its model form except the `common` block (identity, provenance, confidence, layer, colour) and the type tag: the geometry and values that say what the entity *is*. Two entities have the same shape when they are of the same type and a field-by-field comparison (section 1, with the tolerance of section 2) finds no numeric field `BEYOND` and no non-numeric field different.
+
+An entity `x` of the first state and `y` of the second are **counterparts** only when the match is certain both ways: `y` is the only entity of the second state with `x`'s shape, and `x` is the only entity of the first state with `y`'s. A counterpart pair is then compared on every field (so a layer or colour change, or a move within tolerance, is a `MODIFIED` entry with `counterpart` set). An entity with no candidate is `REMOVED` (first state) or `ADDED` (second state). Anything in between -- two candidates, or one candidate that is also another entity's only candidate -- is `UNKNOWN` for the entity of the first state, with every candidate listed; a likeliest pair is never chosen. Two coincident entities of which one was deleted are therefore two `UNKNOWN` entries, not a `REMOVED` and a match: which one went is not knowable from the geometry.
+
 ## 4. Order
 
 The same two states produce the same change set in the same order, byte for byte. The ordering keys are part of the contract:
 
 - In `REFERENCE` mode, entries are ordered by reference ID, ascending.
-- In `GEOMETRY` mode, entries are ordered by entity type, then by the entity's representative point compared lexicographically on (x, y, z), then by its second point where the type has one.
+- In `GEOMETRY` mode, entries are ordered by entity type, then by the entity's representative point compared lexicographically on (x, y, z), then by its second point where the type has one. Entries from both states are ordered together (a `REMOVED` entity and the `ADDED` one that replaced it are neighbours when their points are). The representative point is the first of these fields the entity has: `start_point`, `center`, `position`, `insertion_point`, `point`, `corner1`, `base_point`, else the first element of `vertices`, `fit_points`, `control_points`, `boundary` or `lines`; the second point is the first of `end_point`, `major_axis_endpoint`, `vector`, `corner2`, `target`, else the second element of those arrays. A type with neither (a dimension, whose model form is its block reference) sorts as the origin, and entries with equal keys keep the order they were found in: first state by reference ID, then the second state's additions.
 - Within a `MODIFIED` entry, fields are ordered by field path, ascending (plain string order, so `vertices[10]` sorts before `vertices[2]`).
 
 No hash-based collection takes part in producing the output.
@@ -98,4 +106,5 @@ The tests that keep this contract honest are of the "must never happen" kind, an
 - Values at `tolerance - ε`, `tolerance` and `tolerance + ε` produce `WITHIN`, `BEYOND` and `BEYOND`.
 - An injected wrong edit -- one that touches an entity it was not asked to -- always shows up as an additional entry.
 - The same two states, compared twice, produce byte-identical output.
-- Two revisions with no shared references: identical drawings produce an empty change set; one moved entity produces `REMOVED` plus `ADDED`; two identical entities that swapped places produce `UNKNOWN` with both candidates.
+- Two revisions with no shared references: identical drawings produce an empty change set; one moved entity produces `REMOVED` plus `ADDED`; two identical entities that swapped places produce `UNKNOWN` with both candidates; two coincident entities of which one was deleted produce `UNKNOWN` for both.
+- Changes no picture shows are reported: a move below the tolerance (as `WITHIN`), a move below any output grid but beyond the tolerance, one of two coincident entities deleted, a layer or colour change that keeps the same colour, a block edit cancelled by its instance's scale. Each has an exact expected change set.

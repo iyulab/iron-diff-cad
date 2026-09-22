@@ -84,6 +84,7 @@ fn the_tolerance_boundary_is_beyond() {
             length: tol,
             angle: 1e-9,
         },
+        ..DiffOptions::default()
     };
     let eps = 0.0625;
     for (radius, expected) in [
