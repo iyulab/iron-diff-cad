@@ -98,6 +98,8 @@ dependencies = [
 [[package]]
 name = "uncad-model"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e509af2061bee7a4db6d461ec7727200b25dc36edf424ed334d2d4aace5c0bd5"
 dependencies = [
  "serde",
  "serde_json",
@@ -114,7 +116,3 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
-
-[[patch.unused]]
-name = "iron-render-cad"
-version = "0.1.0"
