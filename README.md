@@ -20,7 +20,7 @@ Input and output are expressed in the [uncad-model](https://github.com/iyulab/un
 
 ## Status
 
-Pre-implementation. No code yet. The design principles are settled and documented in [docs/principles.md](docs/principles.md); read that before proposing anything.
+Pre-implementation. No code yet. The design principles are settled in [docs/principles.md](docs/principles.md), and the shape of what the library returns -- kinds of change, field-level detail, tolerance, matching modes, ordering, JSON -- is the contract in [docs/change-set.md](docs/change-set.md). Read both before proposing anything.
 
 ## License
 
