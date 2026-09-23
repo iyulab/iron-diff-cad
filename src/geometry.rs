@@ -117,8 +117,12 @@ impl SortKey {
     }
 }
 
-/// A `{x, y}` or `{x, y, z}` object as a point; `z` defaults to 0.
+/// A `{x, y}` or `{x, y, z}` object as a point; `z` defaults to 0. A
+/// polyline vertex (`{point, bulge}`) is its point.
 fn point(v: &Value) -> Option<[f64; 3]> {
+    if let Some(p) = v.get("point").filter(|p| p.is_object()) {
+        return point(p);
+    }
     let x = v.get("x")?.as_f64()?;
     let y = v.get("y")?.as_f64()?;
     let z = v.get("z").and_then(Value::as_f64).unwrap_or(0.0);
@@ -285,8 +289,18 @@ mod tests {
         assert_eq!(key.representative, [1.0, 2.0, 3.0]);
         assert_eq!(key.second, [4.0, 5.0, 6.0]);
 
-        let polyline =
-            json!({"vertices": [{"x": 7.0, "y": 8.0}, {"x": 9.0, "y": 10.0}], "closed": true});
+        // A polyline's vertices as the model writes them -- built from the
+        // model's own type, so a change to its shape cannot leave this test
+        // checking a shape nothing produces any more.
+        let vertices = serde_json::to_value(vec![
+            uncad_model::PolylineVertex {
+                point: uncad_model::Point2D { x: 7.0, y: 8.0 },
+                bulge: 0.5,
+            },
+            uncad_model::PolylineVertex::straight(uncad_model::Point2D { x: 9.0, y: 10.0 }),
+        ])
+        .unwrap();
+        let polyline = json!({"vertices": vertices, "closed": true});
         let key = SortKey::of("LWPOLYLINE", &polyline);
         assert_eq!(key.representative, [7.0, 8.0, 0.0]);
         assert_eq!(key.second, [9.0, 10.0, 0.0]);

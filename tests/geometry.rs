@@ -289,3 +289,34 @@ fn the_same_two_revisions_give_the_same_bytes() {
         );
     }
 }
+
+#[test]
+fn a_polyline_whose_only_change_is_a_bulge_has_changed_shape() {
+    // G1's outline, in the second revision with every ID reissued -- so it
+    // can only be paired by its shape -- with one straight edge turned into
+    // an arc. A bulge is part of the shape: the outline is removed and
+    // added, like any other entity whose geometry changed, and nothing else
+    // is reported.
+    let before = g1();
+    let mut after = reissued(&before);
+    let outline = after
+        .entities
+        .iter_mut()
+        .find_map(|e| match e {
+            Entity::LwPolyline(p) => Some(p),
+            _ => None,
+        })
+        .expect("G1 has an outline");
+    outline.vertices[1].bulge = 0.25;
+    let outline_after = outline.common.id;
+
+    let set = diff(&before, &after, geometry());
+    assert_eq!(set.changes.len(), 2, "{:?}", set.changes);
+    let (Change::Removed(removed), Change::Added(added)) = (&set.changes[0], &set.changes[1])
+    else {
+        panic!("expected REMOVED then ADDED, got {:?}", set.changes);
+    };
+    assert_eq!(removed.entity_type, "LWPOLYLINE");
+    assert_eq!(added.id, outline_after);
+    assert_eq!(removed.id.value() + REISSUE, outline_after.value());
+}
