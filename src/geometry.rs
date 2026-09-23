@@ -296,6 +296,7 @@ mod tests {
             uncad_model::PolylineVertex {
                 point: uncad_model::Point2D { x: 7.0, y: 8.0 },
                 bulge: 0.5,
+                ..uncad_model::PolylineVertex::default()
             },
             uncad_model::PolylineVertex::straight(uncad_model::Point2D { x: 9.0, y: 10.0 }),
         ])
