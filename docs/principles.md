@@ -48,7 +48,7 @@ The crate is in 0.x. When a more correct design is found, a breaking change is t
 
 | Just do it | Propose first | Discuss before any work |
 |---|---|---|
-| Tests · bug fixes and refactors that leave the public API unchanged · docs | Public API changes · new dependencies · changes to the shape of the change set | Anything that adds inference · anything in "What it is not" · copyleft dependencies · changes to how confidence is carried |
+| Tests · bug fixes and refactors that leave the public API unchanged · docs · a new field on a result the library returns | Public API changes · new dependencies · changes to the shape of the change set other than a new field | Anything that adds inference · anything in "What it is not" · copyleft dependencies · changes to how confidence is carried |
 
 If it is unclear which column a change falls in, treat it as the stricter one.
 
