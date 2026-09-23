@@ -184,8 +184,8 @@ fn a_block_edit_cancelled_by_its_instance_is_reported_on_both() {
     for e in &mut block.entities {
         if let Entity::LwPolyline(p) = e {
             for v in &mut p.vertices {
-                v.x *= 2.0;
-                v.y *= 2.0;
+                v.point.x *= 2.0;
+                v.point.y *= 2.0;
             }
             frame = Some(p.common.id);
         }
@@ -207,10 +207,10 @@ fn a_block_edit_cancelled_by_its_instance_is_reported_on_both() {
     assert_eq!(
         field_paths(&set.changes[0]),
         [
-            "vertices[1].x",
-            "vertices[2].x",
-            "vertices[2].y",
-            "vertices[3].y"
+            "vertices[1].point.x",
+            "vertices[2].point.x",
+            "vertices[2].point.y",
+            "vertices[3].point.y"
         ]
     );
     assert_eq!(

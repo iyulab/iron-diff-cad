@@ -53,7 +53,7 @@ pub enum Verdict {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FieldChange {
     /// The field's path in the model's JSON form (`radius`, `center.x`,
-    /// `vertices[2].y`, `common.layer`).
+    /// `vertices[2].point.y`, `common.layer`).
     pub path: String,
     /// The value before, in the model's JSON form.
     pub before: serde_json::Value,
