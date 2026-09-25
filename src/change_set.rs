@@ -163,12 +163,78 @@ pub struct ChangeSet {
     /// by entity type, representative point and second point under
     /// geometric matching (contract, section 4).
     pub changes: Vec<Change>,
+    /// What a projection ([`ChangeSet::without`]) left out, counted. Absent
+    /// on a change set as [`crate::diff`] returns it, which leaves nothing
+    /// out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub omitted: Option<Omitted>,
+}
+
+/// Which field changes a projection of a change set leaves out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Omit {
+    /// Numeric fields that moved within tolerance.
+    pub within: bool,
+    /// Fields one side does not state ([`FieldChange::unstated`]).
+    pub unstated: bool,
+}
+
+/// What a projection left out, so that "not listed" is never mistaken for
+/// "did not change".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Omitted {
+    /// Field changes left out because they were within tolerance.
+    pub within_fields: usize,
+    /// Field changes left out because one side does not state the value.
+    pub unstated_fields: usize,
+    /// `MODIFIED` entries left out because none of their fields remained.
+    pub entities: usize,
 }
 
 impl ChangeSet {
     /// `true` when the two states were the same to within tolerance.
     pub fn is_empty(&self) -> bool {
         self.changes.is_empty()
+    }
+
+    /// This change set with the field changes `omit` names left out, and a
+    /// `MODIFIED` entry left out when none of its fields remain -- counted in
+    /// [`Self::omitted`], added to whatever an earlier projection counted.
+    /// `ADDED`, `REMOVED` and `UNKNOWN` entries are kept whole. `self` is not
+    /// modified.
+    pub fn without(&self, omit: Omit) -> ChangeSet {
+        let mut omitted = self.omitted.unwrap_or_default();
+        let mut changes = Vec::with_capacity(self.changes.len());
+        for change in &self.changes {
+            let Change::Modified(m) = change else {
+                changes.push(change.clone());
+                continue;
+            };
+            let mut fields = Vec::with_capacity(m.fields.len());
+            for f in &m.fields {
+                if omit.within && f.verdict == Verdict::Within {
+                    omitted.within_fields += 1;
+                } else if omit.unstated && f.unstated.is_some() {
+                    omitted.unstated_fields += 1;
+                } else {
+                    fields.push(f.clone());
+                }
+            }
+            if fields.is_empty() {
+                omitted.entities += 1;
+            } else {
+                changes.push(Change::Modified(Modified {
+                    fields,
+                    ..m.clone()
+                }));
+            }
+        }
+        ChangeSet {
+            matching: self.matching,
+            tolerance: self.tolerance,
+            changes,
+            omitted: Some(omitted),
+        }
     }
 
     /// The change set as JSON text, in the model's adjacent-tagging

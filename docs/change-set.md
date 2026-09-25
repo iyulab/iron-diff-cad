@@ -30,6 +30,10 @@ Two fields are identity, not content, and are never compared: the reference ID (
 
 Every entry also carries the **provenance** of both entities involved and a **confidence**, which is the lower of the two (a change between two low-confidence values is a low-confidence change, and no change is ever reported with a higher confidence than the entities it involves). Under geometric matching a `MODIFIED` entry also carries `counterpart`, the matched entity's reference ID in the second state; under reference matching the two IDs are the same and the field is absent.
 
+### Projection
+
+A change set is complete: it lists every field that differs, within tolerance or not. A caller that needs a smaller answer -- an agent reading it into a limited context, say -- takes a **projection** of it (`ChangeSet::without`), which leaves out the field changes it is asked to: those `WITHIN` tolerance, those one side does not state (`unstated`), or both. A `MODIFIED` entry none of whose fields remain is left out as well; `ADDED`, `REMOVED` and `UNKNOWN` entries are kept whole. A projection says what it left out, as counts in `omitted` (`within_fields`, `unstated_fields`, `entities`), so that an entity missing from it is never read as unchanged. A change set as the comparison returns it carries no `omitted`.
+
 ## 2. Tolerance
 
 Every numeric comparison uses a tolerance the caller stated or a default the result states -- there is no hidden epsilon (the defaults are `length = 1e-6` and `angle = 1e-9`). Lengths and angles have separate tolerances (`length` and `angle`), in the drawing's own units, since the model carries no unit. A field is an angle when the model documents it as one, which its name says: `rotation`, `start_angle`, `end_angle`, `angle`. Every other numeric field, including dimensionless ones such as scale factors and ratios, is compared with the length tolerance.

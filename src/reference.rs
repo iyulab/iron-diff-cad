@@ -75,5 +75,6 @@ pub fn diff(before: &CadDatabase, after: &CadDatabase, tolerance: Tolerance) -> 
         matching: Matching::Reference,
         tolerance,
         changes,
+        omitted: None,
     }
 }

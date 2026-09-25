@@ -27,7 +27,8 @@ mod geometry;
 mod reference;
 
 pub use change_set::{
-    Change, ChangeSet, EntityRecord, FieldChange, Matching, Modified, Tolerance, Unknown, Verdict,
+    Change, ChangeSet, EntityRecord, FieldChange, Matching, Modified, Omit, Omitted, Side,
+    Tolerance, Unknown, Verdict,
 };
 
 pub use uncad_model::CadDatabase;

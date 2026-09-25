@@ -266,6 +266,7 @@ pub fn diff(before: &CadDatabase, after: &CadDatabase, tolerance: Tolerance) -> 
         matching: Matching::Geometry,
         tolerance,
         changes: changes.into_iter().map(|(_, c)| c).collect(),
+        omitted: None,
     }
 }
 
