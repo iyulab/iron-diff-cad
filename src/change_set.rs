@@ -49,6 +49,14 @@ pub enum Verdict {
     Beyond,
 }
 
+/// Which of the two states a field change refers to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum Side {
+    Before,
+    After,
+}
+
 /// One field of a modified entity.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FieldChange {
@@ -68,6 +76,16 @@ pub struct FieldChange {
     /// For a numeric field, the tolerance verdict. A non-numeric field is
     /// listed only when it differs, and its verdict is always `Beyond`.
     pub verdict: Verdict,
+    /// The state whose value at this path is the model's `null` -- the
+    /// file did not state it, with the meaning the model documents for that
+    /// field -- when the other state's is not. A drawing saved again in a
+    /// newer format states values the older one had no place for, and this
+    /// is how such a change tells itself apart from an edit. Absent when
+    /// both sides carry a value, and when one side has no such element at
+    /// all (an array grew or shrank): that is a change of shape, not of what
+    /// was stated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unstated: Option<Side>,
 }
 
 /// An entity named by a change: its identity and markers.

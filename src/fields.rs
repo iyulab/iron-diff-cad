@@ -7,7 +7,7 @@
 //! it keeps the field paths identical to the ones a consumer sees in the
 //! model's JSON, which is the point of stating them at all.
 
-use crate::change_set::{FieldChange, Tolerance, Verdict};
+use crate::change_set::{FieldChange, Side, Tolerance, Verdict};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -39,7 +39,7 @@ pub fn shape(entity: &Value) -> Value {
 /// The fields that differ between `before` and `after`, ordered by path.
 pub fn compare(before: &Value, after: &Value, tolerance: Tolerance) -> Vec<FieldChange> {
     let mut out = BTreeMap::new();
-    walk("", before, after, tolerance, &mut out);
+    walk("", Some(before), Some(after), tolerance, &mut out);
     out.into_values().collect()
 }
 
@@ -51,13 +51,20 @@ fn join(prefix: &str, key: &str) -> String {
     }
 }
 
+/// Compares the values at `path`. `None` is a side with no value there at
+/// all -- no such key, or an array too short -- which is reported as `null`
+/// but, unlike a `null` the model wrote, is not "not stated".
 fn walk(
     path: &str,
-    before: &Value,
-    after: &Value,
+    before_at: Option<&Value>,
+    after_at: Option<&Value>,
     tolerance: Tolerance,
     out: &mut BTreeMap<String, FieldChange>,
 ) {
+    let (before, after) = (
+        before_at.unwrap_or(&Value::Null),
+        after_at.unwrap_or(&Value::Null),
+    );
     match (before, after) {
         (Value::Object(b), Value::Object(a)) => {
             // Identity fields are never compared -- see IDENTITY_FIELDS.
@@ -76,36 +83,18 @@ fn walk(
                             if IDENTITY_FIELDS.contains(&c.as_str()) {
                                 continue;
                             }
-                            walk(
-                                &join("common", c),
-                                bc.get(c).unwrap_or(&Value::Null),
-                                ac.get(c).unwrap_or(&Value::Null),
-                                tolerance,
-                                out,
-                            );
+                            walk(&join("common", c), bc.get(c), ac.get(c), tolerance, out);
                         }
                         continue;
                     }
                 }
-                walk(
-                    &join(path, key),
-                    b.get(key).unwrap_or(&Value::Null),
-                    a.get(key).unwrap_or(&Value::Null),
-                    tolerance,
-                    out,
-                );
+                walk(&join(path, key), b.get(key), a.get(key), tolerance, out);
             }
         }
         (Value::Array(b), Value::Array(a)) => {
             let n = b.len().max(a.len());
             for i in 0..n {
-                walk(
-                    &format!("{path}[{i}]"),
-                    b.get(i).unwrap_or(&Value::Null),
-                    a.get(i).unwrap_or(&Value::Null),
-                    tolerance,
-                    out,
-                );
+                walk(&format!("{path}[{i}]"), b.get(i), a.get(i), tolerance, out);
             }
         }
         (Value::Number(b), Value::Number(a)) => {
@@ -135,6 +124,7 @@ fn walk(
                     delta: Some(delta),
                     tolerance: Some(tol),
                     verdict,
+                    unstated: None,
                 },
             );
         }
@@ -149,10 +139,21 @@ fn walk(
                         delta: None,
                         tolerance: None,
                         verdict: Verdict::Beyond,
+                        unstated: unstated(before_at, after_at),
                     },
                 );
             }
         }
+    }
+}
+
+/// Which side holds the model's `null` where the other holds a value; a
+/// side with nothing there at all does not count.
+fn unstated(before: Option<&Value>, after: Option<&Value>) -> Option<Side> {
+    match (before, after) {
+        (Some(Value::Null), Some(a)) if !a.is_null() => Some(Side::Before),
+        (Some(b), Some(Value::Null)) if !b.is_null() => Some(Side::After),
+        _ => None,
     }
 }
 
@@ -230,5 +231,33 @@ mod tests {
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].path, "vertices[1]");
         assert_eq!(changes[0].after, Value::Null);
+        // An element that is not there is a change of shape, not a value
+        // the file stopped stating.
+        assert_eq!(changes[0].unstated, None);
+    }
+
+    #[test]
+    fn a_value_one_side_does_not_state_is_marked_with_that_side() {
+        let before = json!({"transparency": null, "closed": null, "target": {"x": 1.0}, "n": 1.0});
+        let after = json!({"transparency": 0, "closed": false, "target": null, "n": null});
+        let changes = compare(&before, &after, Tolerance::default());
+        let marks: Vec<(&str, Option<Side>)> = changes
+            .iter()
+            .map(|c| (c.path.as_str(), c.unstated))
+            .collect();
+        assert_eq!(
+            marks,
+            [
+                ("closed", Some(Side::Before)),
+                ("n", Some(Side::After)),
+                ("target", Some(Side::After)),
+                ("transparency", Some(Side::Before)),
+            ]
+        );
+        // Still a change beyond tolerance: nothing is folded into "the same".
+        assert!(changes.iter().all(|c| c.verdict == Verdict::Beyond));
+        // Two stated values carry no mark.
+        let changes = compare(&json!({"r": 1.0}), &json!({"r": 2.0}), Tolerance::default());
+        assert_eq!(changes[0].unstated, None);
     }
 }
