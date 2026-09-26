@@ -9,6 +9,10 @@ bumps the minor version.
 
 ### Changed
 
+- **Breaking:** `ChangeSet`, `FieldChange`, `EntityRecord`, `Modified`, `Unknown` and
+  `Omitted` are `#[non_exhaustive]`, so a field added later is not a breaking change. A change
+  set is built by `diff` (or deserialized from its JSON form), not by struct literal. `Change`,
+  `Verdict` and `Side` stay exhaustive: a new kind of change is one every consumer must handle.
 - **Breaking:** `FieldChange` gains `unstated` and `ChangeSet` gains `omitted`. Struct
   literals must set them (`None` for both); in JSON they are new keys, present only when set.
 - **Breaking:** Built on the current `uncad-model` API. Field paths follow its JSON form, in

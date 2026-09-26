@@ -79,13 +79,14 @@ fn leaving_out_within_and_unstated_keeps_only_the_edits_and_counts_the_rest() {
         .iter()
         .filter(|c| matches!(c, Change::Modified(_)))
         .count();
+    let omitted = only.omitted.expect("the projection says what it left out");
     assert_eq!(
-        only.omitted,
-        Some(Omitted {
-            within_fields: circles,
-            unstated_fields: unstated,
-            entities: modified - circles,
-        })
+        (
+            omitted.within_fields,
+            omitted.unstated_fields,
+            omitted.entities
+        ),
+        (circles, unstated, modified - circles)
     );
     // The projection is new; the change set it came from is unchanged.
     assert_eq!(full.omitted, None);

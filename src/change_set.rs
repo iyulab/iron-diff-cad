@@ -59,6 +59,7 @@ pub enum Side {
 
 /// One field of a modified entity.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct FieldChange {
     /// The field's path in the model's JSON form (`radius`, `center.x`,
     /// `vertices[2].point.y`, `common.layer`).
@@ -90,6 +91,7 @@ pub struct FieldChange {
 
 /// An entity named by a change: its identity and markers.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct EntityRecord {
     pub id: EntityId,
     /// The DXF type name the model reports for the entity.
@@ -100,6 +102,7 @@ pub struct EntityRecord {
 
 /// An entity present in both states with at least one differing field.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Modified {
     /// The entity's reference ID in the first state.
     pub id: EntityId,
@@ -123,6 +126,7 @@ pub struct Modified {
 /// An entity of the first state whose counterpart in the second could not
 /// be decided with certainty. Only geometric matching produces it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Unknown {
     /// The entity's reference ID in the first state.
     pub id: EntityId,
@@ -156,6 +160,7 @@ impl Change {
 
 /// The exact difference between two drawing states.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ChangeSet {
     pub matching: Matching,
     pub tolerance: Tolerance,
@@ -182,6 +187,7 @@ pub struct Omit {
 /// What a projection left out, so that "not listed" is never mistaken for
 /// "did not change".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Omitted {
     /// Field changes left out because they were within tolerance.
     pub within_fields: usize,
