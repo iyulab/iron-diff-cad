@@ -9,6 +9,12 @@ bumps the minor version.
 
 ### Changed
 
+- Geometric matching no longer compares every entity with every other. Candidates are looked
+  for among the entities of the same type whose place -- the representative point, or the
+  first point of an entity without one -- lies within the length tolerance, found in a sorted
+  window. The change set is the same; a drawing of 10 000 entities is matched in seconds rather
+  than a quarter of an hour.
+
 - **Breaking:** `ChangeSet`, `FieldChange`, `EntityRecord`, `Modified`, `Unknown` and
   `Omitted` are `#[non_exhaustive]`, so a field added later is not a breaking change. A change
   set is built by `diff` (or deserialized from its JSON form), not by struct literal. `Change`,
