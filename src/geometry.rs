@@ -209,7 +209,7 @@ fn anchor(full: &Value, shape: &Value) -> Option<[f64; 2]> {
 /// not depend on anything but the two states.
 struct Window {
     /// Entities with an [`anchor`]: `(type, x, y, index)`, sorted by type,
-    /// then `x`. (JSON numbers are finite, so no anchor is NaN.)
+    /// then `x`, then `y`. (JSON numbers are finite, so no anchor is NaN.)
     anchored: Vec<(String, f64, f64, usize)>,
     /// Entities without one: `(type, index)`, sorted by type.
     loose: Vec<(String, usize)>,
@@ -230,7 +230,12 @@ impl Window {
                 None => loose.push((ty, j)),
             }
         }
-        anchored.sort_by(|p, q| p.0.cmp(&q.0).then(p.1.total_cmp(&q.1)).then(p.3.cmp(&q.3)));
+        anchored.sort_by(|p, q| {
+            p.0.cmp(&q.0)
+                .then(p.1.total_cmp(&q.1))
+                .then(p.2.total_cmp(&q.2))
+                .then(p.3.cmp(&q.3))
+        });
         loose.sort();
         let radius = if tolerance.length > 0.0 {
             tolerance.length
@@ -263,11 +268,22 @@ impl Window {
         let end = self
             .anchored
             .partition_point(|(ty, ax, _, _)| ty.as_str() < t || (ty.as_str() == t && *ax <= hi));
-        self.anchored[start..end.max(start)]
-            .iter()
-            .filter(|(_, _, ay, _)| *ay >= vy - r && *ay <= vy + r)
-            .map(|&(_, _, _, j)| j)
-            .collect()
+        // Within the x window, the entries that share one x are sorted by y
+        // (a column of a drawing's grid can be long): search each such run
+        // for the y window instead of walking it.
+        let window = &self.anchored[start..end.max(start)];
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < window.len() {
+            let x0 = window[i].1;
+            let run = &window[i..];
+            let run = &run[..run.partition_point(|e| e.1.total_cmp(&x0) == Ordering::Equal)];
+            let from = run.partition_point(|e| e.2 < vy - r);
+            let to = run.partition_point(|e| e.2 <= vy + r);
+            out.extend(run[from..to.max(from)].iter().map(|e| e.3));
+            i += run.len();
+        }
+        out
     }
 }
 
