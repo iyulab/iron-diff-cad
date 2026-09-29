@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "iron-diff-cad"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -97,9 +97,9 @@ dependencies = [
 
 [[package]]
 name = "uncad-model"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e509af2061bee7a4db6d461ec7727200b25dc36edf424ed334d2d4aace5c0bd5"
+checksum = "65eca82e75793132fabd9fa9afdf381215834fe9b85e8a896f32c129792ff83d"
 dependencies = [
  "serde",
  "serde_json",

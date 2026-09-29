@@ -7,6 +7,8 @@ bumps the minor version.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-29
+
 ### Changed
 
 - Geometric matching no longer compares every entity with every other. Candidates are looked
