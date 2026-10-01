@@ -7,6 +7,13 @@ bumps the minor version.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-02
+
+### Changed
+
+- Built on `uncad-model` 0.3.0 (a drawing's `header`; a multileader's leader roots), so it
+  compares drawings of that model.
+
 ## [0.2.0] - 2026-09-29
 
 ### Changed
