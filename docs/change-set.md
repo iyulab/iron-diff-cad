@@ -13,9 +13,9 @@ Every entry in a change set is a verdict about one entity. The kinds are a close
 | `ADDED` | The entity is in the second state and has no counterpart in the first |
 | `REMOVED` | The entity is in the first state and has no counterpart in the second |
 | `MODIFIED` | The entity is in both, and at least one of its fields differs |
-| `UNKNOWN` | The library could not decide, with certainty, which entity of the second state corresponds to this entity of the first. It lists the candidates (never empty: an entity with no candidate is `REMOVED`) and the reason. This is a normal result, not an error |
+| `UNKNOWN` | The library could not decide which entity of the second state corresponds to this entity of the first. It lists the candidates (never empty: an entity with no candidate is `REMOVED`) and the reason. This is a normal result, not an error |
 
-A confident wrong match would hide a real change, so an uncertain match is never resolved by picking the likeliest pair. Where a human would see "moved", a comparison without shared references reports `REMOVED` plus `ADDED`; that is the intended cost.
+A confident wrong match would hide a real change, so an uncertain match is never resolved by picking the likeliest pair among rivals: a pair is taken only when the rules of section 3 single it out, and every rule and threshold that did is in the result.
 
 ### Fields of a `MODIFIED` entry
 
@@ -28,7 +28,7 @@ A `MODIFIED` entry carries the list of fields that were compared, one item per f
 
 Two fields are identity, not content, and are never compared: the reference ID (`common.id`) and the handle it was issued from (`common.source_handle`). Under reference matching they are the key; under geometric matching they differ for every pair by definition. Nor is a reference a save names rather than the drawing: a DIMENSION's `block_name` when both sides name an anonymous block (a name starting with `*`). The anonymous block a dimension is drawn with (`*D3`) is renumbered when the file is saved again while the dimension stays as it was, and what that block draws is what the dimension's own fields -- definition points, measurement, text, style -- already state; a dimension drawn differently differs in those, and the block's own entities are compared as entities. A named block is the drawing's own word: a dimension repointed to another named block, or between a named and an anonymous one, is a field change.
 
-Every entry also carries the **provenance** of both entities involved and a **confidence**, which is the lower of the two (a change between two low-confidence values is a low-confidence change, and no change is ever reported with a higher confidence than the entities it involves). Under geometric matching a `MODIFIED` entry also carries `counterpart`, the matched entity's reference ID in the second state; under reference matching the two IDs are the same and the field is absent.
+Every entry also carries the **provenance** of both entities involved and a **confidence**, which is the lower of the two (a change between two low-confidence values is a low-confidence change, and no change is ever reported with a higher confidence than the entities it involves). Under geometric matching a `MODIFIED` entry also carries `counterpart`, the matched entity's reference ID in the second state, and -- when the two shapes differ -- `matched_by`, why they were taken as counterparts (section 3); under reference matching the two IDs are the same and both fields are absent.
 
 ### Projection
 
@@ -52,7 +52,7 @@ The tolerances that were applied are written into the change set's header, so th
 | Mode | When | Matching key | In the result |
 |---|---|---|---|
 | `REFERENCE` | The two states share entity reference IDs (before and after an operation on the same model) | The reference ID, exactly as the model issued it -- this library defines no reference scheme of its own | A reference present in only one state is `ADDED` or `REMOVED`. A reference held by entities of different types in the two states is `REMOVED` plus `ADDED`: no operation on one model changes an entity's type, so they are two entities that carry the same ID, not one entity's field changes |
-| `GEOMETRY` | The two states share no references (two revisions of a drawing) | Entity type plus shape, equal within tolerance | An uncertain correspondence is `UNKNOWN`; a moved entity is `REMOVED` plus `ADDED` |
+| `GEOMETRY` | The two states share no references (two revisions of a drawing) | Entity type plus shape: equal within tolerance first, then similar under stated thresholds | An uncertain correspondence is `UNKNOWN`; an entity with no candidate is `REMOVED` or `ADDED` |
 
 The header names the mode that produced the change set, so the same output cannot be read in two meanings.
 
@@ -68,13 +68,23 @@ Reference matching is right only when the two states share their IDs because the
 
 The fingerprint is where a drawing started (the seed or template it was made from), not which drawing it is: unrelated drawings made from one template share it. A fingerprint that differs is therefore strong evidence of two lineages, one that is the same only weak evidence of one -- which is why `SAME` also asks for shared IDs. `lineage` states every fact the verdict was reached from: `fingerprint_equal` and `version_equal` (absent when either file does not state the GUID; a `$VERSIONGUID` that is the same as well means the same saved state), `shared`, `smaller`, `cross_type`, `threshold`.
 
-The caller chooses the mode, or `AUTO` (the default): `REFERENCE` when the lineage is `SAME`, `GEOMETRY` otherwise -- geometric matching never pairs entities it is not certain of, so a lineage that cannot be shown costs a `MODIFIED` entry becoming `REMOVED` plus `ADDED`, never a wrong pair. `matching` in the header is always the mode used, never `AUTO`. A caller that knows the two states are one drawing -- before and after an operation it made -- chooses `REFERENCE`, and `lineage` still tells whether the files bear that out.
+The caller chooses the mode, or `AUTO` (the default): `REFERENCE` when the lineage is `SAME`, `GEOMETRY` otherwise -- geometric matching pairs entities only where its rules single a pair out, so a lineage that cannot be shown costs, at worst, a `MODIFIED` entry becoming `UNKNOWN` or `REMOVED` plus `ADDED` -- never a pair chosen among rivals. `matching` in the header is always the mode used, never `AUTO`. A caller that knows the two states are one drawing -- before and after an operation it made -- chooses `REFERENCE`, and `lineage` still tells whether the files bear that out.
 
 ### Geometric matching
 
 An entity's **shape** is every field of its model form except the `common` block (identity, provenance, confidence, layer, colour), the type tag and a reference a save names (a DIMENSION's `block_name` when it names an anonymous block -- section 1): the geometry and values that say what the entity *is*. A nested entity -- an INSERT's attributes -- is part of the shape without its own `common` block. A counterpart pair is compared on every field but identity: the reference ID and source handle are never compared fields, in the entity's `common` block or a nested entity's. Two entities have the same shape when they are of the same type and a field-by-field comparison (section 1, with the tolerance of section 2) finds no numeric field `BEYOND` and no non-numeric field different.
 
-An entity `x` of the first state and `y` of the second are **counterparts** only when the match is certain both ways: `y` is the only entity of the second state with `x`'s shape, and `x` is the only entity of the first state with `y`'s. A counterpart pair is then compared on every field (so a layer or colour change, or a move within tolerance, is a `MODIFIED` entry with `counterpart` set). An entity with no candidate is `REMOVED` (first state) or `ADDED` (second state). Anything in between -- two candidates, or one candidate that is also another entity's only candidate -- is `UNKNOWN` for the entity of the first state, with every candidate listed; a likeliest pair is never chosen. Two coincident entities of which one was deleted are therefore two `UNKNOWN` entries, not a `REMOVED` and a match: which one went is not knowable from the geometry.
+Matching runs in two stages, and every pair either stage takes is compared on every field (so a layer or colour change, or a move within tolerance, is a `MODIFIED` entry with `counterpart` set).
+
+**Agreeing shapes.** An entity `x` of the first state and `y` of the second are counterparts when the match is certain both ways: `y` is the only entity of the second state with `x`'s shape, and `x` is the only entity of the first state with `y`'s. An entity with two or more such candidates, or with one candidate that is also another entity's only candidate, is `UNKNOWN` for the entity of the first state, with every candidate listed. Two coincident entities of which one was deleted are therefore two `UNKNOWN` entries, not a `REMOVED` and a match: which one went is not knowable from the geometry.
+
+**Changed shapes.** The entities no shape agreed with -- in either state -- are then compared with the entities of their type left in the other state. The **similarity** of two shapes is the share of their leaf values that agree: every leaf either shape holds is counted once (a field one side lacks, or an array element past the shorter array's end, counts as leaves that disagree, so the longer shape sets the scale), a number agrees when it is within its tolerance (section 2), any other leaf when it is equal, and an empty object or array counts as one leaf. `x` and `y` are counterparts when all of these hold, under thresholds the caller states or the defaults:
+
+1. their similarity is at least `min_similarity` (default `0.5`);
+2. `y` is the single entity most similar to `x`, and `x` the single entity most similar to `y` -- a tie is no pair;
+3. their similarity stands at least `min_margin` (default `0.1`) above the **runner-up**: the next highest similarity of `x` with another candidate, or of `y` with another entity of the first state, whichever is higher. With no runner-up the condition holds.
+
+Such a `MODIFIED` entry carries `matched_by`: the `similarity` and the `runner_up` (absent when there was none). An entity of the first state that does not pair this way but has entities whose similarity reaches `min_similarity` is `UNKNOWN`, with those candidates, their `similarities` in the same order, and which condition failed as the reason; one with none is `REMOVED`. An entity of the second state is `ADDED` when it is neither a counterpart nor anyone's candidate. The thresholds are written into the header as `pairing`, so the same output cannot be read against different ones; a `min_similarity` above 1 pairs nothing in this stage, since a pair whose every leaf agrees has the same shape.
 
 ## 4. Order
 
@@ -103,10 +113,32 @@ The serialized form follows the model's own convention: adjacently tagged, upper
         "fields": [
           { "path": "radius", "before": 5.0, "after": 6.0, "delta": 1.0,
             "tolerance": 0.001, "verdict": "BEYOND" }
-        ] } },
+        ] } }
+  ]
+}
+```
+
+Under geometric matching the header also carries `pairing`, a pair whose shapes differ carries `matched_by`, and an `UNKNOWN` found by similarity carries `similarities`:
+
+```json
+{
+  "matching": "GEOMETRY",
+  "tolerance": { "length": 0.001, "angle": 0.0001 },
+  "pairing": { "min_similarity": 0.5, "min_margin": 0.1 },
+  "lineage": { "verdict": "UNKNOWN", "shared": 0, "smaller": 72, "cross_type": 0, "threshold": 0.5 },
+  "changes": [
+    { "type": "MODIFIED", "data": {
+        "id": 289, "counterpart": 4385, "entity_type": "CIRCLE",
+        "provenance": ["VECTOR", "VECTOR"], "confidence": "HIGH",
+        "fields": [
+          { "path": "radius", "before": 5.0, "after": 6.0, "delta": 1.0,
+            "tolerance": 0.001, "verdict": "BEYOND" }
+        ],
+        "matched_by": { "similarity": 0.857, "runner_up": 0.714 } } },
     { "type": "UNKNOWN", "data": {
         "id": 301, "candidates": [412, 413],
-        "reason": "two identical circles, no shared reference" } }
+        "reason": "2 entities of the second state are equally similar to this CIRCLE ...",
+        "similarities": [0.714, 0.714] } }
   ]
 }
 ```
@@ -127,5 +159,5 @@ The tests that keep this contract honest are of the "must never happen" kind, an
 - Values at `tolerance - ε`, `tolerance` and `tolerance + ε` produce `WITHIN`, `BEYOND` and `BEYOND`.
 - An injected wrong edit -- one that touches an entity it was not asked to -- always shows up as an additional entry.
 - The same two states, compared twice, produce byte-identical output.
-- Two revisions with no shared references: identical drawings produce an empty change set; one moved entity produces `REMOVED` plus `ADDED`; two identical entities that swapped places produce `UNKNOWN` with both candidates; two coincident entities of which one was deleted produce `UNKNOWN` for both.
+- Two revisions with no shared references: identical drawings produce an empty change set; one moved or resized entity produces one `MODIFIED` entry with exactly the fields a comparison by reference reports, and `REMOVED` plus `ADDED` when nothing but agreeing shapes may pair; two identical entities that swapped places produce `UNKNOWN` with both candidates; two coincident entities of which one was deleted produce `UNKNOWN` for both; two changed entities equally similar to two others produce `UNKNOWN` for both, never a pair; the result does not depend on the order the entities are listed in.
 - Changes no picture shows are reported: a move below the tolerance (as `WITHIN`), a move below any output grid but beyond the tolerance, one of two coincident entities deleted, a layer or colour change that keeps the same colour, a block edit cancelled by its instance's scale. Each has an exact expected change set.

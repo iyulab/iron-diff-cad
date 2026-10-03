@@ -2,7 +2,7 @@
 //! the same drawing with every reference ID reissued, so the two states
 //! share no references and only type and shape can pair their entities.
 
-use iron_diff_cad::{diff, Change, DiffOptions, Matching, Verdict};
+use iron_diff_cad::{diff, Change, DiffOptions, Matching, Pairing, Verdict};
 use serde_json::Value;
 use uncad_model::model::{Entity, EntityId, Point3D, Ref};
 use uncad_model::CadDatabase;
@@ -138,13 +138,37 @@ fn identical_revisions_with_no_shared_references_have_an_empty_change_set() {
 }
 
 #[test]
-fn a_moved_entity_is_removed_plus_added_never_a_guess() {
+fn a_moved_entity_is_paired_by_similarity_with_the_reason_stated() {
     let before = g1();
     let mut after = reissued(&before);
     let hole = hole_ids(&before)[0];
     move_circle(&mut after, after_id(hole), 10.0);
 
     let set = diff(&before, &after, geometry());
+    assert_eq!(set.pairing, Some(Pairing::default()));
+    assert_eq!(set.changes.len(), 1, "{:?}", set.changes);
+    let Change::Modified(m) = &set.changes[0] else {
+        panic!("expected MODIFIED, got {:?}", set.changes[0]);
+    };
+    assert_eq!(m.id, hole);
+    assert_eq!(m.counterpart, Some(after_id(hole)));
+    let paths: Vec<&str> = m.fields.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(paths, ["center.x"]);
+    // Every other hole was paired by its unchanged shape, so the moved one
+    // has no rival: six of its seven leaves agree.
+    let matched_by = m.matched_by.expect("paired by similarity");
+    assert_eq!(matched_by.similarity, 6.0 / 7.0);
+    assert_eq!(matched_by.runner_up, None);
+}
+
+#[test]
+fn with_no_similarity_enough_a_moved_entity_is_removed_plus_added() {
+    let before = g1();
+    let mut after = reissued(&before);
+    let hole = hole_ids(&before)[0];
+    move_circle(&mut after, after_id(hole), 10.0);
+
+    let set = diff(&before, &after, exact_shapes_only());
     assert_eq!(set.changes.len(), 2, "{:?}", set.changes);
     let Change::Removed(removed) = &set.changes[0] else {
         panic!("expected REMOVED first, got {:?}", set.changes[0]);
@@ -155,6 +179,190 @@ fn a_moved_entity_is_removed_plus_added_never_a_guess() {
     assert_eq!(removed.id, hole);
     assert_eq!(added.id, after_id(hole));
     assert_eq!(removed.entity_type, "CIRCLE");
+}
+
+/// Geometric matching that pairs nothing but agreeing shapes: no
+/// similarity reaches a threshold above 1.
+fn exact_shapes_only() -> DiffOptions {
+    DiffOptions {
+        pairing: Pairing {
+            min_similarity: 1.5,
+            ..Pairing::default()
+        },
+        ..geometry()
+    }
+}
+
+fn set_radius(db: &mut CadDatabase, id: EntityId, radius: f64) {
+    for e in circles(db, id) {
+        if let Entity::Circle(c) = e {
+            c.radius = radius;
+        }
+    }
+}
+
+fn set_measurement(db: &mut CadDatabase, id: EntityId, measurement: f64) {
+    let blocks = db
+        .tables
+        .block_records
+        .values_mut()
+        .flat_map(|b| b.entities.iter_mut());
+    let mut hit = 0;
+    for e in db.entities.iter_mut().chain(blocks) {
+        if let Entity::Dimension(d) = e {
+            if d.common.id == id {
+                d.measurement = Some(measurement);
+                hit += 1;
+            }
+        }
+    }
+    assert!(hit > 0, "dimension {id:?} exists");
+}
+
+/// G1's diameter dimension, on its first hole.
+fn hole_diameter() -> EntityId {
+    EntityId::new(296)
+}
+
+/// A field change as `(path, before, after)`.
+type FieldValues = (String, Value, Value);
+
+/// Each `MODIFIED` entry's entity and its field changes, by entity.
+fn modified_fields(set: &iron_diff_cad::ChangeSet) -> Vec<(EntityId, Vec<FieldValues>)> {
+    let mut out: Vec<(EntityId, Vec<FieldValues>)> = set
+        .changes
+        .iter()
+        .map(|c| match c {
+            Change::Modified(m) => (
+                m.id,
+                m.fields
+                    .iter()
+                    .map(|f| (f.path.clone(), f.before.clone(), f.after.clone()))
+                    .collect(),
+            ),
+            other => panic!("expected MODIFIED, got {other:?}"),
+        })
+        .collect();
+    out.sort_by_key(|(id, _)| *id);
+    out
+}
+
+#[test]
+fn a_resized_hole_and_its_remeasured_dimension_read_as_by_reference() {
+    // A revision that resizes a hole and records the new diameter: matched
+    // by geometry, the same entries -- same fields, same values -- as a
+    // comparison of the two states by reference.
+    let mut before = g1();
+    set_measurement(&mut before, hole_diameter(), 10.0);
+    let hole = hole_ids(&before)[0];
+    let mut edited = before.clone();
+    set_radius(&mut edited, hole, 6.0);
+    set_measurement(&mut edited, hole_diameter(), 12.0);
+
+    let expected = modified_fields(&diff(&before, &edited, by_reference()));
+    assert_eq!(
+        expected,
+        [
+            (hole, vec![("radius".into(), 5.0.into(), 6.0.into())]),
+            (
+                hole_diameter(),
+                vec![("measurement".into(), 10.0.into(), 12.0.into())]
+            ),
+        ]
+    );
+    let got = modified_fields(&diff(&before, &reissued(&edited), geometry()));
+    assert_eq!(got, expected);
+}
+
+#[test]
+fn two_holes_changed_alike_pair_when_each_singles_the_other_out() {
+    // The two lower holes, (20, 20) and (180, 20), both resized 5 -> 6:
+    // each new hole agrees with its old one on everything but the radius,
+    // and with the other old one on less (the x differs too).
+    let before = g1();
+    let holes = hole_ids(&before);
+    let mut after = reissued(&before);
+    for &h in &holes[..2] {
+        set_radius(&mut after, after_id(h), 6.0);
+    }
+    let set = diff(&before, &after, geometry());
+    assert_eq!(set.changes.len(), 2, "{:?}", set.changes);
+    for (change, &h) in set.changes.iter().zip(&holes[..2]) {
+        let Change::Modified(m) = change else {
+            panic!("expected MODIFIED, got {change:?}");
+        };
+        assert_eq!((m.id, m.counterpart), (h, Some(after_id(h))));
+        let matched_by = m.matched_by.expect("paired by similarity");
+        assert_eq!(matched_by.similarity, 6.0 / 7.0);
+        assert_eq!(matched_by.runner_up, Some(5.0 / 7.0));
+    }
+}
+
+#[test]
+fn two_holes_equally_similar_to_two_others_are_unknown_never_a_pick() {
+    // Two holes at (0, 0) and (50, 50) become two at (0, 50) and (50, 0),
+    // resized: each old hole shares one coordinate with each new one.
+    // Nothing tells the pairs apart, so neither is chosen.
+    let mut before = g1();
+    let holes = hole_ids(&before);
+    let place = |db: &mut CadDatabase, id: EntityId, x: f64, y: f64, r: f64| {
+        set_center(db, id, Point3D { x, y, z: 0.0 });
+        set_radius(db, id, r);
+    };
+    place(&mut before, holes[0], 0.0, 0.0, 5.0);
+    place(&mut before, holes[1], 50.0, 50.0, 5.0);
+    let mut after = reissued(&before);
+    place(&mut after, after_id(holes[0]), 0.0, 50.0, 6.0);
+    place(&mut after, after_id(holes[1]), 50.0, 0.0, 6.0);
+
+    let set = diff(&before, &after, geometry());
+    assert_eq!(set.changes.len(), 2, "{:?}", set.changes);
+    for change in &set.changes {
+        let Change::Unknown(u) = change else {
+            panic!("expected UNKNOWN, got {change:?}");
+        };
+        assert_eq!(u.candidates, [after_id(holes[0]), after_id(holes[1])]);
+        assert_eq!(u.similarities, Some(vec![5.0 / 7.0, 5.0 / 7.0]));
+        assert!(
+            u.reason
+                .starts_with("2 entities of the second state are equally similar"),
+            "{}",
+            u.reason
+        );
+    }
+}
+
+#[test]
+fn a_pair_too_close_to_its_runner_up_is_unknown() {
+    // The two lower holes resized as before, under a margin the scores
+    // cannot clear (6/7 against 5/7): each is UNKNOWN with both candidates.
+    let before = g1();
+    let holes = hole_ids(&before);
+    let mut after = reissued(&before);
+    for &h in &holes[..2] {
+        set_radius(&mut after, after_id(h), 6.0);
+    }
+    let options = DiffOptions {
+        pairing: Pairing {
+            min_margin: 0.2,
+            ..Pairing::default()
+        },
+        ..geometry()
+    };
+    let set = diff(&before, &after, options);
+    assert_eq!(set.pairing.map(|p| p.min_margin), Some(0.2));
+    assert_eq!(set.changes.len(), 2, "{:?}", set.changes);
+    for change in &set.changes {
+        let Change::Unknown(u) = change else {
+            panic!("expected UNKNOWN, got {change:?}");
+        };
+        assert_eq!(u.candidates, [after_id(holes[0]), after_id(holes[1])]);
+        assert!(
+            u.reason.contains("stands less than 0.2 above the next"),
+            "{}",
+            u.reason
+        );
+    }
 }
 
 #[test]
@@ -267,7 +475,7 @@ fn entries_are_ordered_by_type_then_representative_point() {
     move_circle(&mut after, after_id(holes[0]), 10.0);
     move_circle(&mut after, after_id(holes[3]), 10.0);
 
-    let set = diff(&before, &after, geometry());
+    let set = diff(&before, &after, exact_shapes_only());
     let summary: Vec<(&str, EntityId)> = set
         .changes
         .iter()
@@ -316,12 +524,12 @@ fn the_same_two_revisions_give_the_same_bytes() {
 }
 
 #[test]
-fn a_polyline_whose_only_change_is_a_bulge_has_changed_shape() {
+fn a_polyline_whose_only_change_is_a_bulge_is_paired_with_that_field() {
     // G1's outline, in the second revision with every ID reissued -- so it
     // can only be paired by its shape -- with one straight edge turned into
-    // an arc. A bulge is part of the shape: the outline is removed and
-    // added, like any other entity whose geometry changed, and nothing else
-    // is reported.
+    // an arc. A bulge is part of the shape, so the shapes differ; the
+    // outline is still the one polyline nearly all of whose leaves agree,
+    // and the change is that one field.
     let before = g1();
     let mut after = reissued(&before);
     let outline = after
@@ -336,6 +544,17 @@ fn a_polyline_whose_only_change_is_a_bulge_has_changed_shape() {
     let outline_after = outline.common.id;
 
     let set = diff(&before, &after, geometry());
+    assert_eq!(set.changes.len(), 1, "{:?}", set.changes);
+    let Change::Modified(m) = &set.changes[0] else {
+        panic!("expected MODIFIED, got {:?}", set.changes);
+    };
+    assert_eq!(m.entity_type, "LWPOLYLINE");
+    assert_eq!(m.counterpart, Some(outline_after));
+    let paths: Vec<&str> = m.fields.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(paths, ["vertices[1].bulge"]);
+
+    // With only agreeing shapes paired, it is removed and added.
+    let set = diff(&before, &after, exact_shapes_only());
     assert_eq!(set.changes.len(), 2, "{:?}", set.changes);
     let (Change::Removed(removed), Change::Added(added)) = (&set.changes[0], &set.changes[1])
     else {

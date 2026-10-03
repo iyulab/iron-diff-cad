@@ -87,3 +87,44 @@ fn the_order_is_by_reference_id_whatever_the_edit_order() {
         sorted
     );
 }
+
+/// The two states with every entity list -- the drawing's and each block's
+/// -- in reverse order.
+fn reversed(db: &CadDatabase) -> CadDatabase {
+    let mut db = db.clone();
+    db.entities.reverse();
+    for block in db.tables.block_records.values_mut() {
+        block.entities.reverse();
+    }
+    db
+}
+
+#[test]
+fn geometric_pairs_of_changed_entities_do_not_depend_on_the_input_order() {
+    // Every hole resized, each by a different amount, and matched by
+    // geometry: each is paired by similarity with its resized self. The
+    // bytes are the same every time and whatever order the entities are
+    // listed in.
+    let geometry = DiffOptions {
+        matching: iron_diff_cad::Matching::Geometry,
+        ..DiffOptions::default()
+    };
+    let before = g1();
+    let mut after = before.clone();
+    let ids = edit_every_hole(&mut after, &[3, 1, 2, 0]);
+    let set = diff(&before, &after, geometry);
+    assert_eq!(set.changes.len(), ids.len(), "{:?}", set.changes);
+    assert!(set.changes.iter().all(|c| matches!(
+        c,
+        iron_diff_cad::Change::Modified(m) if m.matched_by.is_some()
+    )));
+    let first = set.to_json(false).unwrap();
+    for run in 1..RUNS {
+        let again = diff(&before, &after, geometry).to_json(false).unwrap();
+        assert_eq!(first, again, "run {run}: the change set changed");
+    }
+    let shuffled = diff(&reversed(&before), &reversed(&after), geometry)
+        .to_json(false)
+        .unwrap();
+    assert_eq!(first, shuffled, "the input order changed the change set");
+}

@@ -48,6 +48,52 @@ impl Default for Tolerance {
     }
 }
 
+/// When geometric matching takes a changed entity's likeliest counterpart
+/// as its counterpart (contract, section 3). Written into a change set
+/// matched by geometry, so it cannot be read against different thresholds.
+///
+/// After the entities whose shapes agree are paired, an entity left without
+/// a counterpart in the first state and one in the second, of the same
+/// type, are scored by their [similarity](MatchedBy::similarity). They are
+/// counterparts only when the score reaches `min_similarity`, each is the
+/// other's single highest score, and the next highest score involving
+/// either of them is at least `min_margin` lower.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Pairing {
+    /// The least similarity a pair needs. Above 1 nothing is paired this
+    /// way: a pair whose every field agrees has the same shape and was
+    /// paired already.
+    pub min_similarity: f64,
+    /// How far the pair's similarity must stand above the next highest
+    /// score of either entity.
+    pub min_margin: f64,
+}
+
+impl Default for Pairing {
+    /// A visible default, written into every change set matched by geometry.
+    fn default() -> Self {
+        Pairing {
+            min_similarity: 0.5,
+            min_margin: 0.1,
+        }
+    }
+}
+
+/// Why two entities whose shapes differ were taken as counterparts
+/// ([`Pairing`]).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct MatchedBy {
+    /// The share of the two shapes' fields that agree within tolerance,
+    /// counted over every leaf value either shape holds (contract,
+    /// section 3).
+    pub similarity: f64,
+    /// The next highest similarity of either entity with another entity
+    /// of its type left without a counterpart; absent when there is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner_up: Option<f64>,
+}
+
 /// Whether a numeric difference is within the tolerance or beyond it.
 /// `|delta| < tolerance` is within; anything else, including exactly the
 /// tolerance, is beyond.
@@ -130,6 +176,11 @@ pub struct Modified {
     /// Every compared field that differs, including numeric fields that moved
     /// within tolerance, ordered by path.
     pub fields: Vec<FieldChange>,
+    /// Under geometric matching, for a pair whose shapes differ: why the two
+    /// were taken as counterparts. Absent for a pair whose shapes agree,
+    /// and under reference matching.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matched_by: Option<MatchedBy>,
 }
 
 /// An entity of the first state whose counterpart in the second could not
@@ -139,11 +190,18 @@ pub struct Modified {
 pub struct Unknown {
     /// The entity's reference ID in the first state.
     pub id: EntityId,
-    /// The entities of the second state that match it within tolerance,
-    /// by their reference IDs, ascending. Never empty: an entity with no
-    /// candidate is `REMOVED`.
+    /// The entities of the second state it could correspond to, by their
+    /// reference IDs, ascending: those whose shape agrees with its own
+    /// within tolerance, or -- when there is none -- those whose
+    /// similarity reaches the pairing threshold ([`Pairing`]). Never empty:
+    /// an entity with no candidate is `REMOVED`.
     pub candidates: Vec<EntityId>,
     pub reason: String,
+    /// For candidates found by similarity, each one's similarity, in the
+    /// order of `candidates`. Absent when the candidates' shapes agree with
+    /// this entity's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub similarities: Option<Vec<f64>>,
 }
 
 /// One verdict about one entity.
@@ -174,6 +232,10 @@ pub struct ChangeSet {
     /// The mode the entities were matched by -- never `AUTO`.
     pub matching: Matching,
     pub tolerance: Tolerance,
+    /// The thresholds changed entities were paired by under geometric
+    /// matching; absent under reference matching.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pairing: Option<Pairing>,
     /// Whether the two states are of one lineage, and why
     /// ([`crate::lineage`]): what chose the mode under `AUTO`, and under a
     /// mode the caller chose, whether the files bear that choice out.
@@ -254,6 +316,7 @@ impl ChangeSet {
         ChangeSet {
             matching: self.matching,
             tolerance: self.tolerance,
+            pairing: self.pairing,
             lineage: self.lineage.clone(),
             changes,
             omitted: Some(omitted),

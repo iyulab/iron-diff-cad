@@ -11,7 +11,9 @@
 //! entity with no candidate at all is `REMOVED` or `ADDED`, which is what a
 //! move looks like here.
 
-use crate::change_set::{Change, ChangeSet, Matching, Modified, Tolerance, Unknown, Verdict};
+use crate::change_set::{
+    Change, ChangeSet, MatchedBy, Matching, Modified, Pairing, Tolerance, Unknown, Verdict,
+};
 use crate::fields;
 use crate::reference::{by_id, record};
 use serde_json::Value;
@@ -297,11 +299,227 @@ fn same_shape(x: &Item<'_>, y: &Item<'_>, tolerance: Tolerance) -> bool {
             .all(|f| f.verdict == Verdict::Within)
 }
 
-/// The change set between two states that share no references. Every
-/// entity of each state is either the certain counterpart of exactly one
-/// entity of the other (compared field by field), or has no candidate
-/// (`REMOVED`/`ADDED`), or is `UNKNOWN` with its candidates.
-pub fn diff(before: &CadDatabase, after: &CadDatabase, tolerance: Tolerance) -> ChangeSet {
+/// A counterpart pair, compared on every field; `None` when nothing differs.
+fn modified(
+    x: &Item<'_>,
+    y: &Item<'_>,
+    tolerance: Tolerance,
+    matched_by: Option<MatchedBy>,
+) -> Option<Change> {
+    let fields = fields::compare(&x.full, &y.full, tolerance);
+    if fields.is_empty() {
+        return None;
+    }
+    Some(Change::Modified(Modified {
+        id: x.id,
+        counterpart: Some(y.id),
+        entity_type: y.entity.type_name().to_string(),
+        provenance: [x.entity.common().origin, y.entity.common().origin],
+        confidence: x
+            .entity
+            .common()
+            .confidence
+            .min(y.entity.common().confidence),
+        fields,
+        matched_by,
+    }))
+}
+
+/// The highest score in a row or column of the similarity table, and the
+/// next one: `(best, how many share it, the index holding it, second)`.
+#[derive(Clone, Copy)]
+struct Top {
+    best: f64,
+    ties: usize,
+    at: usize,
+    second: Option<f64>,
+}
+
+impl Top {
+    fn new() -> Self {
+        Top {
+            best: f64::NEG_INFINITY,
+            ties: 0,
+            at: usize::MAX,
+            second: None,
+        }
+    }
+
+    fn offer(&mut self, score: f64, at: usize) {
+        if score > self.best {
+            if self.ties > 0 {
+                self.second = Some(self.best);
+            }
+            self.best = score;
+            self.ties = 1;
+            self.at = at;
+        } else if score == self.best {
+            self.ties += 1;
+        } else if self.second.is_none_or(|s| score > s) {
+            self.second = Some(score);
+        }
+    }
+
+    /// The next highest score other than the single best one.
+    fn runner_up(&self) -> Option<f64> {
+        if self.ties > 1 {
+            Some(self.best)
+        } else {
+            self.second
+        }
+    }
+}
+
+/// The second stage of geometric matching: entities of the first state
+/// (`removed`) and of the second (`added`) that no shape agreed with, paired
+/// by similarity where [`Pairing`] singles a pair out. Returns the entries
+/// for the entities of the first state, by index (none for a pair that
+/// does not differ), and which entities of the second
+/// state are spoken for -- a counterpart or a listed candidate -- so that
+/// only the rest are `ADDED`.
+fn pair_changed(
+    b: &[Item<'_>],
+    a: &[Item<'_>],
+    removed: &[usize],
+    added: &[usize],
+    tolerance: Tolerance,
+    pairing: Pairing,
+) -> (Vec<(usize, Change)>, Vec<bool>) {
+    let mut entries = Vec::new();
+    let mut spoken_for = vec![false; a.len()];
+    // Only entities of one type are compared; `removed` and `added` are in
+    // index order, so each type's run is found by filtering.
+    let mut types: Vec<&str> = removed
+        .iter()
+        .map(|&i| b[i].key.entity_type.as_str())
+        .collect();
+    types.sort_unstable();
+    types.dedup();
+    for t in types {
+        let rs: Vec<usize> = removed
+            .iter()
+            .copied()
+            .filter(|&i| b[i].key.entity_type == t)
+            .collect();
+        let cs: Vec<usize> = added
+            .iter()
+            .copied()
+            .filter(|&j| a[j].key.entity_type == t)
+            .collect();
+        if cs.is_empty() {
+            for &i in &rs {
+                entries.push((i, Change::Removed(record(b[i].entity))));
+            }
+            continue;
+        }
+        // The table, row by row: rows are `rs`, columns `cs`.
+        let scores: Vec<Vec<f64>> = rs
+            .iter()
+            .map(|&i| {
+                cs.iter()
+                    .map(|&j| fields::similarity(&b[i].shape, &a[j].shape, tolerance))
+                    .collect()
+            })
+            .collect();
+        let mut rows = vec![Top::new(); rs.len()];
+        let mut columns = vec![Top::new(); cs.len()];
+        for (r, row) in scores.iter().enumerate() {
+            for (c, &s) in row.iter().enumerate() {
+                rows[r].offer(s, c);
+                columns[c].offer(s, r);
+            }
+        }
+        for (r, &i) in rs.iter().enumerate() {
+            let x = &b[i];
+            let top = rows[r];
+            if top.best < pairing.min_similarity {
+                entries.push((i, Change::Removed(record(x.entity))));
+                continue;
+            }
+            let c = top.at;
+            let mutual = top.ties == 1 && columns[c].ties == 1 && columns[c].at == r;
+            let runner_up = match (top.runner_up(), columns[c].runner_up()) {
+                (Some(p), Some(q)) => Some(p.max(q)),
+                (p, q) => p.or(q),
+            };
+            let clear = runner_up.is_none_or(|u| top.best - u >= pairing.min_margin);
+            if mutual && clear {
+                let y = &a[cs[c]];
+                spoken_for[cs[c]] = true;
+                let matched_by = MatchedBy {
+                    similarity: top.best,
+                    runner_up,
+                };
+                if let Some(change) = modified(x, y, tolerance, Some(matched_by)) {
+                    entries.push((i, change));
+                }
+                continue;
+            }
+            // Listed by reference ID, each with its score.
+            let mut listed: Vec<(EntityId, f64)> = scores[r]
+                .iter()
+                .enumerate()
+                .filter(|&(_, &s)| s >= pairing.min_similarity)
+                .map(|(c, &s)| {
+                    spoken_for[cs[c]] = true;
+                    (a[cs[c]].id, s)
+                })
+                .collect();
+            listed.sort_by_key(|&(id, _)| id);
+            let reason = if top.ties > 1 {
+                format!(
+                    "{} entities of the second state are equally similar to this {} \
+                     ({} of their fields agree), and none is singled out",
+                    top.ties,
+                    x.entity.type_name(),
+                    share(top.best)
+                )
+            } else if !mutual {
+                format!(
+                    "its likeliest counterpart ({} of their fields agree) is at least as \
+                     similar to another entity of the first state",
+                    share(top.best)
+                )
+            } else {
+                format!(
+                    "its likeliest counterpart ({} of their fields agree) stands less than \
+                     {} above the next ({})",
+                    share(top.best),
+                    pairing.min_margin,
+                    share(runner_up.expect("a margin short of the minimum has a runner-up"))
+                )
+            };
+            entries.push((
+                i,
+                Change::Unknown(Unknown {
+                    id: x.id,
+                    candidates: listed.iter().map(|&(id, _)| id).collect(),
+                    reason,
+                    similarities: Some(listed.iter().map(|&(_, s)| s).collect()),
+                }),
+            ));
+        }
+    }
+    (entries, spoken_for)
+}
+
+/// A similarity as a reader takes it in: a percentage, to one decimal.
+fn share(s: f64) -> String {
+    format!("{:.1}%", s * 100.0)
+}
+
+/// The change set between two states that share no references. Entities
+/// whose shapes agree are paired first, only where the pairing is certain
+/// both ways; an entity with two or more such candidates is `UNKNOWN`. The
+/// entities left are then paired by similarity where [`Pairing`] singles a
+/// pair out; one with candidates but no such pair is `UNKNOWN`, and one
+/// with none is `REMOVED`/`ADDED`.
+pub fn diff(
+    before: &CadDatabase,
+    after: &CadDatabase,
+    tolerance: Tolerance,
+    pairing: Pairing,
+) -> ChangeSet {
     let b: Vec<Item<'_>> = by_id(before)
         .into_iter()
         .map(|(id, e)| Item::new(id, e))
@@ -326,70 +544,64 @@ pub fn diff(before: &CadDatabase, after: &CadDatabase, tolerance: Tolerance) -> 
         }
     }
 
-    let mut changes: Vec<(SortKey, Change)> = Vec::new();
+    // What each entity of the first state comes to, by its index: nothing
+    // for a counterpart pair that does not differ.
+    let mut found: Vec<Option<Change>> = vec![None; b.len()];
+    let mut removed = Vec::new();
     for (i, x) in b.iter().enumerate() {
         let js = &candidates_b[i];
-        match js.as_slice() {
-            [] => changes.push((x.key.clone(), Change::Removed(record(x.entity)))),
-            [j] if candidates_a[*j].len() == 1 => {
-                let y = &a[*j];
-                let fields = fields::compare(&x.full, &y.full, tolerance);
-                if fields.is_empty() {
-                    continue;
-                }
-                changes.push((
-                    x.key.clone(),
-                    Change::Modified(Modified {
-                        id: x.id,
-                        counterpart: Some(y.id),
-                        entity_type: y.entity.type_name().to_string(),
-                        provenance: [x.entity.common().origin, y.entity.common().origin],
-                        confidence: x
-                            .entity
-                            .common()
-                            .confidence
-                            .min(y.entity.common().confidence),
-                        fields,
-                    }),
-                ));
+        found[i] = match js.as_slice() {
+            [] => {
+                removed.push(i);
+                None
             }
+            [j] if candidates_a[*j].len() == 1 => modified(x, &a[*j], tolerance, None),
             [j] => {
                 let others = candidates_a[*j].len() - 1;
-                changes.push((
-                    x.key.clone(),
-                    Change::Unknown(Unknown {
-                        id: x.id,
-                        candidates: vec![a[*j].id],
-                        reason: format!(
-                            "its only candidate in the second state also matches {others} other \
-                             {} of the first state within tolerance",
-                            plural(others, "entity", "entities")
-                        ),
-                    }),
-                ));
+                Some(Change::Unknown(Unknown {
+                    id: x.id,
+                    candidates: vec![a[*j].id],
+                    reason: format!(
+                        "its only candidate in the second state also matches {others} other \
+                         {} of the first state within tolerance",
+                        plural(others, "entity", "entities")
+                    ),
+                    similarities: None,
+                }))
             }
             many => {
                 let mut candidates: Vec<EntityId> = many.iter().map(|&j| a[j].id).collect();
                 candidates.sort();
-                changes.push((
-                    x.key.clone(),
-                    Change::Unknown(Unknown {
-                        id: x.id,
-                        candidates,
-                        reason: format!(
-                            "{} {} of the second state match this {} within tolerance",
-                            many.len(),
-                            plural(many.len(), "entity", "entities"),
-                            x.entity.type_name()
-                        ),
-                    }),
-                ));
+                Some(Change::Unknown(Unknown {
+                    id: x.id,
+                    candidates,
+                    reason: format!(
+                        "{} {} of the second state match this {} within tolerance",
+                        many.len(),
+                        plural(many.len(), "entity", "entities"),
+                        x.entity.type_name()
+                    ),
+                    similarities: None,
+                }))
             }
-        }
+        };
     }
-    for (j, y) in a.iter().enumerate() {
-        if candidates_a[j].is_empty() {
-            changes.push((y.key.clone(), Change::Added(record(y.entity))));
+    let added: Vec<usize> = (0..a.len())
+        .filter(|&j| candidates_a[j].is_empty())
+        .collect();
+    let (paired, spoken_for) = pair_changed(&b, &a, &removed, &added, tolerance, pairing);
+    for (i, change) in paired {
+        found[i] = Some(change);
+    }
+
+    let mut changes: Vec<(SortKey, Change)> = found
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, c)| Some((b[i].key.clone(), c?)))
+        .collect();
+    for &j in &added {
+        if !spoken_for[j] {
+            changes.push((a[j].key.clone(), Change::Added(record(a[j].entity))));
         }
     }
 
@@ -400,6 +612,7 @@ pub fn diff(before: &CadDatabase, after: &CadDatabase, tolerance: Tolerance) -> 
     ChangeSet {
         matching: Matching::Geometry,
         tolerance,
+        pairing: Some(pairing),
         changes: changes.into_iter().map(|(_, c)| c).collect(),
         omitted: None,
         lineage: None,

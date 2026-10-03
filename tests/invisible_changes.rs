@@ -109,8 +109,9 @@ fn a_move_below_the_tolerance_is_still_reported() {
 }
 
 /// A move of a hundredth of a unit: beyond the default tolerance, still
-/// below the grid of a PDF export. `MODIFIED` with `BEYOND` when the states
-/// share references; a `REMOVED` plus `ADDED` pair when they do not.
+/// below the grid of a PDF export. `MODIFIED` with `BEYOND` either way --
+/// paired by reference when the states share references, by similarity
+/// when they do not.
 #[test]
 fn a_move_below_any_visible_grid_is_beyond_tolerance() {
     let before = g1();
@@ -129,7 +130,12 @@ fn a_move_below_any_visible_grid_is_beyond_tolerance() {
     assert_eq!(m.fields[0].verdict, Verdict::Beyond);
 
     let set = diff(&before, &after, geometry());
-    assert_eq!(kinds(&set), ["REMOVED", "ADDED"]);
+    assert_eq!(kinds(&set), ["MODIFIED"]);
+    let Change::Modified(m) = &set.changes[0] else {
+        unreachable!()
+    };
+    assert_eq!(m.fields[0].verdict, Verdict::Beyond);
+    assert!(m.matched_by.is_some(), "the shapes differ beyond tolerance");
 }
 
 /// Two coincident lines; one is deleted. The picture is the same line.

@@ -16,9 +16,11 @@
 //! Two revisions that share no references are compared with
 //! [`Matching::Geometry`]: an entity's counterpart is the one entity of the
 //! other state with the same type and shape within tolerance, and only when
-//! that correspondence is certain both ways; anything less is reported as
-//! [`Change::Unknown`] with the candidates, and a moved entity is
-//! `REMOVED` plus `ADDED`.
+//! that correspondence is certain both ways. An entity whose shape changed
+//! is then paired with the one entity of its type it is most similar to,
+//! only when stated thresholds ([`Pairing`]) single that pair out both ways;
+//! anything less is reported as [`Change::Unknown`] with the candidates,
+//! and an entity with none is `REMOVED` or `ADDED`.
 //!
 //! The shape of the change set is the contract in `docs/change-set.md`; the
 //! rules are in `docs/principles.md`.
@@ -32,8 +34,8 @@ pub mod lineage;
 mod reference;
 
 pub use change_set::{
-    Change, ChangeSet, EntityRecord, FieldChange, Matching, Modified, Omit, Omitted, Side,
-    Tolerance, Unknown, Verdict,
+    Change, ChangeSet, EntityRecord, FieldChange, MatchedBy, Matching, Modified, Omit, Omitted,
+    Pairing, Side, Tolerance, Unknown, Verdict,
 };
 pub use lineage::{lineage, Lineage, LineageVerdict, DEFAULT_SHARED_THRESHOLD};
 
@@ -51,6 +53,8 @@ pub struct DiffOptions {
     /// The share of the smaller state's entities whose IDs both states must
     /// hold for the lineage to be `SAME` ([`lineage`]).
     pub shared_threshold: f64,
+    /// When geometric matching pairs entities whose shapes differ.
+    pub pairing: Pairing,
 }
 
 impl Default for DiffOptions {
@@ -59,6 +63,7 @@ impl Default for DiffOptions {
             tolerance: Tolerance::default(),
             matching: Matching::Auto,
             shared_threshold: DEFAULT_SHARED_THRESHOLD,
+            pairing: Pairing::default(),
         }
     }
 }
@@ -74,7 +79,7 @@ pub fn diff(before: &CadDatabase, after: &CadDatabase, options: DiffOptions) -> 
         chosen => chosen,
     };
     let mut set = match matching {
-        Matching::Geometry => geometry::diff(before, after, options.tolerance),
+        Matching::Geometry => geometry::diff(before, after, options.tolerance, options.pairing),
         // `Auto` was resolved above.
         Matching::Reference | Matching::Auto => reference::diff(before, after, options.tolerance),
     };

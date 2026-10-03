@@ -205,6 +205,80 @@ fn walk(
     }
 }
 
+/// The share of two shapes' leaf values that agree, by the rules
+/// [`compare`] uses: a number agrees when it differs by less than its
+/// tolerance, any other leaf when it is equal. Every leaf either shape
+/// holds is counted once -- a field one side lacks, or an array element
+/// past the shorter array's end, counts as leaves that disagree -- so the
+/// longer shape sets the scale. An empty object or array counts as one
+/// leaf.
+pub fn similarity(before: &Value, after: &Value, tolerance: Tolerance) -> f64 {
+    let (agree, total) = agreement("", Some(before), Some(after), tolerance);
+    agree as f64 / total.max(1) as f64
+}
+
+/// `(leaves that agree, leaves)` at `path`.
+fn agreement(
+    path: &str,
+    before: Option<&Value>,
+    after: Option<&Value>,
+    tolerance: Tolerance,
+) -> (usize, usize) {
+    match (before, after) {
+        (None, None) => (0, 0),
+        (Some(v), None) | (None, Some(v)) => (0, leaves(v)),
+        (Some(Value::Object(b)), Some(Value::Object(a))) if !(b.is_empty() && a.is_empty()) => {
+            let mut keys: Vec<&String> = b.keys().chain(a.keys()).collect();
+            keys.sort();
+            keys.dedup();
+            keys.into_iter().fold((0, 0), |(s, n), k| {
+                let (s2, n2) = agreement(&join(path, k), b.get(k), a.get(k), tolerance);
+                (s + s2, n + n2)
+            })
+        }
+        (Some(Value::Array(b)), Some(Value::Array(a))) if !(b.is_empty() && a.is_empty()) => {
+            (0..b.len().max(a.len())).fold((0, 0), |(s, n), i| {
+                let (s2, n2) = agreement(&format!("{path}[{i}]"), b.get(i), a.get(i), tolerance);
+                (s + s2, n + n2)
+            })
+        }
+        (Some(Value::Number(b)), Some(Value::Number(a))) => {
+            let agrees = match (b.as_f64(), a.as_f64()) {
+                (Some(bv), Some(av)) => {
+                    let tol = if is_angle(path) {
+                        tolerance.angle
+                    } else {
+                        tolerance.length
+                    };
+                    bv == av || (av - bv).abs() < tol
+                }
+                _ => b == a,
+            };
+            (usize::from(agrees), 1)
+        }
+        (Some(b), Some(a)) if is_leaf(b) && is_leaf(a) => (usize::from(b == a), 1),
+        // A leaf against a container, or an object against an array.
+        (Some(b), Some(a)) => (0, leaves(b).max(leaves(a))),
+    }
+}
+
+/// A scalar, or an empty object or array.
+fn is_leaf(v: &Value) -> bool {
+    match v {
+        Value::Object(m) => m.is_empty(),
+        Value::Array(a) => a.is_empty(),
+        _ => true,
+    }
+}
+
+fn leaves(v: &Value) -> usize {
+    match v {
+        Value::Object(m) if !m.is_empty() => m.values().map(leaves).sum(),
+        Value::Array(a) if !a.is_empty() => a.iter().map(leaves).sum(),
+        _ => 1,
+    }
+}
+
 /// Which side holds the model's `null` where the other holds a value; a
 /// side with nothing there at all does not count.
 fn unstated(before: Option<&Value>, after: Option<&Value>) -> Option<Side> {
@@ -373,5 +447,60 @@ mod tests {
         // Two stated values carry no mark.
         let changes = compare(&json!({"r": 1.0}), &json!({"r": 2.0}), Tolerance::default());
         assert_eq!(changes[0].unstated, None);
+    }
+
+    #[test]
+    fn similarity_is_the_share_of_leaves_that_agree() {
+        let tol = Tolerance::default();
+        let circle = |x: f64, r: f64| {
+            json!({"center": {"x": x, "y": 2.0, "z": 0.0}, "radius": r,
+                   "extrusion": {"x": 0.0, "y": 0.0, "z": 1.0}})
+        };
+        assert_eq!(similarity(&circle(1.0, 5.0), &circle(1.0, 5.0), tol), 1.0);
+        assert_eq!(
+            similarity(&circle(1.0, 5.0), &circle(1.0, 6.0), tol),
+            6.0 / 7.0
+        );
+        // Within tolerance agrees, as it does for the field list.
+        assert_eq!(
+            similarity(&circle(1.0, 5.0), &circle(1.0 + 1e-7, 5.0), tol),
+            1.0
+        );
+        assert_eq!(
+            similarity(&circle(1.0, 5.0), &circle(9.0, 6.0), tol),
+            5.0 / 7.0
+        );
+    }
+
+    #[test]
+    fn similarity_counts_what_one_side_lacks_against_the_longer_shape() {
+        let tol = Tolerance::default();
+        let point = |x: f64| json!({"x": x, "y": 0.0});
+        let three = json!({"vertices": [point(0.0), point(1.0), point(2.0)]});
+        let two = json!({"vertices": [point(0.0), point(1.0)]});
+        // Six leaves on the longer side, four of them shared.
+        assert_eq!(similarity(&three, &two, tol), 4.0 / 6.0);
+        assert_eq!(similarity(&two, &three, tol), 4.0 / 6.0);
+        // A field only one side has counts as its leaves.
+        let tagged = json!({"vertices": [point(0.0), point(1.0)], "closed": true});
+        assert_eq!(similarity(&two, &tagged, tol), 4.0 / 5.0);
+        // A leaf against a container: the container's leaves, none agreeing.
+        assert_eq!(
+            similarity(&json!({"p": null}), &json!({"p": point(0.0)}), tol),
+            0.0
+        );
+        // Empty containers are one leaf each.
+        assert_eq!(similarity(&json!({"a": []}), &json!({"a": []}), tol), 1.0);
+    }
+
+    #[test]
+    fn similarity_uses_the_angle_tolerance_by_field_name() {
+        let tol = Tolerance {
+            length: 1e-3,
+            angle: 1e-9,
+        };
+        let before = json!({"rotation": 0.0, "text_height": 0.0});
+        let after = json!({"rotation": 1e-5, "text_height": 1e-5});
+        assert_eq!(similarity(&before, &after, tol), 0.5);
     }
 }

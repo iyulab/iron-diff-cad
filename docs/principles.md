@@ -6,9 +6,9 @@
 
 The same two states produce the same change set, in the same order. The library never calls an inference endpoint, never embeds a model, and never guesses.
 
-When two entities cannot be matched with certainty, the library says so — it reports the candidates as **unmatched** or the match as **"unknown"** rather than picking the likeliest pair. "Unknown" is a normal result, not an error.
+When two entities cannot be matched by a stated rule, the library says so — it reports the candidates as **unmatched** or the match as **"unknown"** rather than picking the likeliest pair among rivals. A pair whose shapes differ is taken only when explicit thresholds single it out both ways, and the result carries the thresholds and the scores that did. "Unknown" is a normal result, not an error.
 
-*What this costs:* a revision comparison will sometimes report "removed + added" where a human would see "moved". That is intended — a confident wrong match hides a real change.
+*What this costs:* a revision comparison will sometimes report "unknown" or "removed + added" where a human would see "moved". That is intended — a confident wrong match hides a real change.
 
 ## 2. Numbers, not pictures
 

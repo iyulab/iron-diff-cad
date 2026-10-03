@@ -72,6 +72,7 @@ pub fn diff(before: &CadDatabase, after: &CadDatabase, tolerance: Tolerance) -> 
                     provenance: [x.common().origin, y.common().origin],
                     confidence: x.common().confidence.min(y.common().confidence),
                     fields,
+                    matched_by: None,
                 }));
             }
             (None, None) => unreachable!("an id came from one of the two maps"),
@@ -81,6 +82,7 @@ pub fn diff(before: &CadDatabase, after: &CadDatabase, tolerance: Tolerance) -> 
     ChangeSet {
         matching: Matching::Reference,
         tolerance,
+        pairing: None,
         changes,
         omitted: None,
         lineage: None,
