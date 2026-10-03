@@ -7,6 +7,16 @@ use iron_diff_cad::{diff, Change, DiffOptions, Matching, Tolerance, Verdict};
 use uncad_model::model::{Confidence, Entity, EntityId};
 use uncad_model::CadDatabase;
 
+/// Pairing by reference ID, as a caller that knows the two states are one
+/// drawing asks for it: these states are an edit of one golden drawing,
+/// whose file states no fingerprint.
+fn by_reference() -> DiffOptions {
+    DiffOptions {
+        matching: iron_diff_cad::Matching::Reference,
+        ..DiffOptions::default()
+    }
+}
+
 fn g1() -> CadDatabase {
     serde_json::from_str(include_str!("golden/g1.expected.json"))
         .expect("the golden model deserializes")
@@ -50,7 +60,7 @@ fn a_single_edit_is_exactly_one_modified_entry_with_exactly_one_field() {
     let hole = hole_ids(&before)[0];
     set_radius(&mut after, hole, 6.0);
 
-    let set = diff(&before, &after, DiffOptions::default());
+    let set = diff(&before, &after, by_reference());
     assert_eq!(set.matching, Matching::Reference);
     assert_eq!(set.changes.len(), 1, "{:?}", set.changes);
     let Change::Modified(m) = &set.changes[0] else {
@@ -68,7 +78,7 @@ fn a_single_edit_is_exactly_one_modified_entry_with_exactly_one_field() {
 #[test]
 fn identical_states_have_an_empty_change_set() {
     let before = g1();
-    let set = diff(&before, &before.clone(), DiffOptions::default());
+    let set = diff(&before, &before.clone(), by_reference());
     assert!(set.is_empty(), "{:?}", set.changes);
 }
 
@@ -84,7 +94,7 @@ fn the_tolerance_boundary_is_beyond() {
             length: tol,
             angle: 1e-9,
         },
-        ..DiffOptions::default()
+        ..by_reference()
     };
     let eps = 0.0625;
     for (radius, expected) in [
@@ -123,8 +133,8 @@ fn an_edit_that_touches_more_than_it_was_asked_to_is_reported() {
     let mut wrong = right.clone();
     set_radius(&mut wrong, holes[2], 5.5);
 
-    let right_set = diff(&before, &right, DiffOptions::default());
-    let wrong_set = diff(&before, &wrong, DiffOptions::default());
+    let right_set = diff(&before, &right, by_reference());
+    let wrong_set = diff(&before, &wrong, by_reference());
     assert_ne!(right_set, wrong_set);
     assert_eq!(wrong_set.changes.len(), 2);
     assert!(
@@ -151,7 +161,7 @@ fn added_and_removed_entities_are_reported_as_such() {
         b.entities.retain(|e| e.common().id != removed_id);
     }
 
-    let set = diff(&before, &after, DiffOptions::default());
+    let set = diff(&before, &after, by_reference());
     let kinds: Vec<(&str, EntityId)> = set
         .changes
         .iter()
@@ -178,7 +188,7 @@ fn a_change_carries_the_lower_confidence() {
             }
         }
     }
-    let set = diff(&before, &after, DiffOptions::default());
+    let set = diff(&before, &after, by_reference());
     let Change::Modified(m) = &set.changes[0] else {
         panic!("expected MODIFIED");
     };
@@ -202,7 +212,7 @@ fn the_inputs_are_not_modified() {
     set_radius(&mut after, hole_ids(&before)[0], 7.0);
     let before_copy = before.clone();
     let after_copy = after.clone();
-    let _ = diff(&before, &after, DiffOptions::default());
+    let _ = diff(&before, &after, by_reference());
     assert_eq!(before, before_copy);
     assert_eq!(after, after_copy);
 }
@@ -212,7 +222,7 @@ fn the_json_form_is_adjacently_tagged() {
     let before = g1();
     let mut after = before.clone();
     set_radius(&mut after, hole_ids(&before)[0], 6.0);
-    let json = diff(&before, &after, DiffOptions::default())
+    let json = diff(&before, &after, by_reference())
         .to_json(false)
         .unwrap();
     assert!(json.starts_with("{\"matching\":\"REFERENCE\",\"tolerance\":{"));
@@ -262,7 +272,7 @@ fn the_same_reference_under_another_type_is_removed_plus_added_never_modified() 
     let hole = hole_ids(&before)[0];
     let after = retyped_as_line(&before, hole);
 
-    let set = diff(&before, &after, DiffOptions::default());
+    let set = diff(&before, &after, by_reference());
     let kinds: Vec<(&str, EntityId, &str)> = set
         .changes
         .iter()
@@ -322,6 +332,6 @@ fn dimension_blocks_renumbered(db: &CadDatabase) -> CadDatabase {
 fn a_dimension_whose_anonymous_block_a_save_renumbered_is_not_modified() {
     let before = g1();
     let after = dimension_blocks_renumbered(&before);
-    let set = diff(&before, &after, DiffOptions::default());
+    let set = diff(&before, &after, by_reference());
     assert!(set.is_empty(), "{:?}", set.changes);
 }

@@ -4,6 +4,16 @@ use iron_diff_cad::{diff, Change, ChangeSet, DiffOptions, Omit, Omitted, Side};
 use uncad_model::model::Entity;
 use uncad_model::CadDatabase;
 
+/// Pairing by reference ID, as a caller that knows the two states are one
+/// drawing asks for it: these states are an edit of one golden drawing,
+/// whose file states no fingerprint.
+fn by_reference() -> DiffOptions {
+    DiffOptions {
+        matching: iron_diff_cad::Matching::Reference,
+        ..DiffOptions::default()
+    }
+}
+
 fn g1() -> CadDatabase {
     serde_json::from_str(include_str!("golden/g1.expected.json"))
         .expect("the golden model deserializes")
@@ -43,7 +53,7 @@ fn fields(set: &ChangeSet) -> Vec<(String, Option<Side>)> {
 #[test]
 fn a_change_set_as_diff_returns_it_leaves_nothing_out() {
     let (before, after) = edited();
-    let full = diff(&before, &after, DiffOptions::default());
+    let full = diff(&before, &after, by_reference());
     assert_eq!(full.omitted, None);
     let json = full.to_json(false).unwrap();
     assert!(!json.contains("omitted"), "absent from the JSON too");
@@ -52,7 +62,7 @@ fn a_change_set_as_diff_returns_it_leaves_nothing_out() {
 #[test]
 fn leaving_out_within_and_unstated_keeps_only_the_edits_and_counts_the_rest() {
     let (before, after) = edited();
-    let full = diff(&before, &after, DiffOptions::default());
+    let full = diff(&before, &after, by_reference());
     let circles = before
         .entities
         .iter()
@@ -90,13 +100,13 @@ fn leaving_out_within_and_unstated_keeps_only_the_edits_and_counts_the_rest() {
     );
     // The projection is new; the change set it came from is unchanged.
     assert_eq!(full.omitted, None);
-    assert_eq!(full, diff(&before, &after, DiffOptions::default()));
+    assert_eq!(full, diff(&before, &after, by_reference()));
 }
 
 #[test]
 fn a_projection_of_a_projection_adds_to_the_counts() {
     let (before, after) = edited();
-    let full = diff(&before, &after, DiffOptions::default());
+    let full = diff(&before, &after, by_reference());
     let once = full
         .without(Omit {
             within: true,

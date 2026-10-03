@@ -7,6 +7,16 @@ use serde_json::Value;
 use uncad_model::model::{Entity, EntityId, Point3D, Ref};
 use uncad_model::CadDatabase;
 
+/// Pairing by reference ID, as a caller that knows the two states are one
+/// drawing asks for it: these states are an edit of one golden drawing,
+/// whose file states no fingerprint.
+fn by_reference() -> DiffOptions {
+    DiffOptions {
+        matching: iron_diff_cad::Matching::Reference,
+        ..DiffOptions::default()
+    }
+}
+
 fn g1() -> CadDatabase {
     serde_json::from_str(include_str!("golden/g1.expected.json"))
         .expect("the golden model deserializes")
@@ -240,7 +250,7 @@ fn under_reference_matching_the_counterpart_is_absent() {
     let mut after = before.clone();
     let hole = hole_ids(&before)[0];
     move_circle(&mut after, hole, 1.0);
-    let set = diff(&before, &after, DiffOptions::default());
+    let set = diff(&before, &after, by_reference());
     let Change::Modified(m) = &set.changes[0] else {
         panic!("{:?}", set.changes[0]);
     };

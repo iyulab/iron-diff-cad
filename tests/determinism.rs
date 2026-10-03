@@ -6,6 +6,16 @@ use iron_diff_cad::{diff, DiffOptions};
 use uncad_model::model::{Entity, EntityId};
 use uncad_model::CadDatabase;
 
+/// Pairing by reference ID, as a caller that knows the two states are one
+/// drawing asks for it: these states are an edit of one golden drawing,
+/// whose file states no fingerprint.
+fn by_reference() -> DiffOptions {
+    DiffOptions {
+        matching: iron_diff_cad::Matching::Reference,
+        ..DiffOptions::default()
+    }
+}
+
 /// How often each output is regenerated. With four or more entries in a
 /// leaked hash set, two consecutive identical orders are already unlikely;
 /// this many leave no realistic chance of a false pass.
@@ -48,11 +58,11 @@ fn repeated_diffs_are_byte_identical() {
     let before = g1();
     let mut after = before.clone();
     edit_every_hole(&mut after, &[3, 1, 2, 0]);
-    let first = diff(&before, &after, DiffOptions::default())
+    let first = diff(&before, &after, by_reference())
         .to_json(false)
         .unwrap();
     for run in 1..RUNS {
-        let again = diff(&before, &after, DiffOptions::default())
+        let again = diff(&before, &after, by_reference())
             .to_json(false)
             .unwrap();
         assert_eq!(first, again, "run {run}: the change set changed");
@@ -66,8 +76,8 @@ fn the_order_is_by_reference_id_whatever_the_edit_order() {
     let ids = edit_every_hole(&mut a, &[3, 1, 2, 0]);
     let mut b = before.clone();
     edit_every_hole(&mut b, &[0, 1, 2, 3]);
-    let set_a = diff(&before, &a, DiffOptions::default());
-    let set_b = diff(&before, &b, DiffOptions::default());
+    let set_a = diff(&before, &a, by_reference());
+    let set_b = diff(&before, &b, by_reference());
     let order: Vec<EntityId> = set_a.changes.iter().map(|c| c.id()).collect();
     let mut sorted = ids.clone();
     sorted.sort();

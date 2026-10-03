@@ -7,6 +7,24 @@ bumps the minor version.
 
 ## [Unreleased]
 
+### Added
+
+- `lineage(&before, &after, threshold)` and the change set's `lineage`: whether two states are one
+  drawing -- `SAME`, `DIFFERENT` or `UNKNOWN` -- judged from the header's `$FINGERPRINTGUID`, the
+  reference IDs both states hold and whether any of them names entities of two types, with every
+  fact the verdict was reached from (`fingerprint_equal`, `version_equal`, `shared`, `smaller`,
+  `cross_type`, `threshold`). Carried by every change set, whatever the mode.
+- `Matching::Auto`: reference matching when the lineage is `SAME`, geometric matching otherwise.
+  The change set's `matching` is always the mode used. `DiffOptions::shared_threshold` sets the
+  share of shared IDs `SAME` asks for (`DEFAULT_SHARED_THRESHOLD`, a half).
+
+### Changed
+
+- **Breaking:** `DiffOptions::default()` matches by `Matching::Auto`, no longer by reference: two
+  unrelated drawings whose IDs coincide were paired into confident field changes. A caller that
+  compares two states it knows are one drawing (before and after its own edit) asks for
+  `Matching::Reference`. `Matching` has a new variant and `DiffOptions` a new field.
+
 ### Fixed
 
 - Under reference matching, a reference held by entities of different types in the two states

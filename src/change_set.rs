@@ -5,17 +5,26 @@
 use serde::{Deserialize, Serialize};
 use uncad_model::model::{Confidence, EntityId, Origin};
 
+use crate::lineage::Lineage;
+
 /// Which key matched entities of the two states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum Matching {
     /// The two states share entity reference IDs, and those were the key,
     /// exactly as the model issued them.
-    #[default]
     Reference,
     /// The two states share no references; entities were matched by type
     /// and shape within tolerance, and only where the match is certain.
     Geometry,
+    /// A choice for [`DiffOptions`](crate::DiffOptions), never in a change
+    /// set: [`Reference`](Self::Reference) when the lineage is
+    /// [`Same`](crate::LineageVerdict::Same), [`Geometry`](Self::Geometry)
+    /// otherwise -- geometric matching never pairs entities it is not
+    /// certain of. The change set states the mode used and the lineage
+    /// that chose it.
+    #[default]
+    Auto,
 }
 
 /// The tolerances a change set was computed with. Written into the change
@@ -162,8 +171,15 @@ impl Change {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct ChangeSet {
+    /// The mode the entities were matched by -- never `AUTO`.
     pub matching: Matching,
     pub tolerance: Tolerance,
+    /// Whether the two states are of one lineage, and why
+    /// ([`crate::lineage`]): what chose the mode under `AUTO`, and under a
+    /// mode the caller chose, whether the files bear that choice out.
+    /// Absent only in a change set from before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lineage: Option<Lineage>,
     /// Ordered by entity reference ID, ascending, under reference matching;
     /// by entity type, representative point and second point under
     /// geometric matching (contract, section 4).
@@ -238,6 +254,7 @@ impl ChangeSet {
         ChangeSet {
             matching: self.matching,
             tolerance: self.tolerance,
+            lineage: self.lineage.clone(),
             changes,
             omitted: Some(omitted),
         }

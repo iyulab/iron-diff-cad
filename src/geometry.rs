@@ -402,6 +402,7 @@ pub fn diff(before: &CadDatabase, after: &CadDatabase, tolerance: Tolerance) -> 
         tolerance,
         changes: changes.into_iter().map(|(_, c)| c).collect(),
         omitted: None,
+        lineage: None,
     }
 }
 

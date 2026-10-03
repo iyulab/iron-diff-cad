@@ -9,6 +9,10 @@
 //! the stated tolerance. The same two states produce the same change set,
 //! in the same order, byte for byte.
 //!
+//! Whether the two states are one drawing at all is judged first, from what
+//! the files state ([`lineage`]); under the default [`Matching::Auto`] that
+//! verdict picks the mode, and the change set carries it either way.
+//!
 //! Two revisions that share no references are compared with
 //! [`Matching::Geometry`]: an entity's counterpart is the one entity of the
 //! other state with the same type and shape within tolerance, and only when
@@ -24,30 +28,56 @@
 mod change_set;
 mod fields;
 mod geometry;
+pub mod lineage;
 mod reference;
 
 pub use change_set::{
     Change, ChangeSet, EntityRecord, FieldChange, Matching, Modified, Omit, Omitted, Side,
     Tolerance, Unknown, Verdict,
 };
+pub use lineage::{lineage, Lineage, LineageVerdict, DEFAULT_SHARED_THRESHOLD};
 
 pub use uncad_model::CadDatabase;
 
 /// Options for [`diff`].
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DiffOptions {
     pub tolerance: Tolerance,
-    /// How entities of the two states are paired. The default is by
-    /// reference ID.
+    /// How entities of the two states are paired. The default,
+    /// [`Matching::Auto`], lets the lineage decide; a caller that knows the
+    /// two states are one drawing -- before and after an edit it made --
+    /// says [`Matching::Reference`].
     pub matching: Matching,
+    /// The share of the smaller state's entities whose IDs both states must
+    /// hold for the lineage to be `SAME` ([`lineage`]).
+    pub shared_threshold: f64,
+}
+
+impl Default for DiffOptions {
+    fn default() -> Self {
+        DiffOptions {
+            tolerance: Tolerance::default(),
+            matching: Matching::Auto,
+            shared_threshold: DEFAULT_SHARED_THRESHOLD,
+        }
+    }
 }
 
 /// The exact change set between `before` and `after`. Neither input is
 /// modified; the result is a new value in the order the contract fixes for
 /// the matching mode.
 pub fn diff(before: &CadDatabase, after: &CadDatabase, options: DiffOptions) -> ChangeSet {
-    match options.matching {
-        Matching::Reference => reference::diff(before, after, options.tolerance),
+    let lineage = lineage(before, after, options.shared_threshold);
+    let matching = match options.matching {
+        Matching::Auto if lineage.verdict == LineageVerdict::Same => Matching::Reference,
+        Matching::Auto => Matching::Geometry,
+        chosen => chosen,
+    };
+    let mut set = match matching {
         Matching::Geometry => geometry::diff(before, after, options.tolerance),
-    }
+        // `Auto` was resolved above.
+        Matching::Reference | Matching::Auto => reference::diff(before, after, options.tolerance),
+    };
+    set.lineage = Some(lineage);
+    set
 }

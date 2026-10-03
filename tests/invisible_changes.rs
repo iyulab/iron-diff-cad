@@ -10,6 +10,16 @@ use iron_diff_cad::{diff, Change, DiffOptions, Matching, Verdict};
 use uncad_model::model::{Entity, EntityId, Ref, TextOverride};
 use uncad_model::CadDatabase;
 
+/// Pairing by reference ID, as a caller that knows the two states are one
+/// drawing asks for it: these states are an edit of one golden drawing,
+/// whose file states no fingerprint.
+fn by_reference() -> DiffOptions {
+    DiffOptions {
+        matching: iron_diff_cad::Matching::Reference,
+        ..DiffOptions::default()
+    }
+}
+
 fn g1() -> CadDatabase {
     serde_json::from_str(include_str!("golden/g1.expected.json"))
         .expect("the golden model deserializes")
@@ -28,7 +38,7 @@ fn g5() -> CadDatabase {
 fn geometry() -> DiffOptions {
     DiffOptions {
         matching: Matching::Geometry,
-        ..DiffOptions::default()
+        ..by_reference()
     }
 }
 
@@ -89,7 +99,7 @@ fn a_move_below_the_tolerance_is_still_reported() {
             c.center.x += 1e-7;
         }
     }
-    let set = diff(&before, &after, DiffOptions::default());
+    let set = diff(&before, &after, by_reference());
     assert_eq!(kinds(&set), ["MODIFIED"]);
     assert_eq!(field_paths(&set.changes[0]), ["center.x"]);
     let Change::Modified(m) = &set.changes[0] else {
@@ -111,7 +121,7 @@ fn a_move_below_any_visible_grid_is_beyond_tolerance() {
             c.center.x += 0.01;
         }
     }
-    let set = diff(&before, &after, DiffOptions::default());
+    let set = diff(&before, &after, by_reference());
     assert_eq!(kinds(&set), ["MODIFIED"]);
     let Change::Modified(m) = &set.changes[0] else {
         unreachable!()
@@ -133,7 +143,7 @@ fn one_of_two_coincident_entities_removed_is_reported() {
         block.entities.retain(|e| e.common().id != gone);
     }
 
-    let set = diff(&before, &after, DiffOptions::default());
+    let set = diff(&before, &after, by_reference());
     assert_eq!(kinds(&set), ["REMOVED"]);
     assert_eq!(set.changes[0].id(), gone);
 
@@ -159,7 +169,7 @@ fn a_layer_or_colour_change_that_keeps_the_same_ink_is_reported() {
         }
     }
 
-    for options in [DiffOptions::default(), geometry()] {
+    for options in [by_reference(), geometry()] {
         let set = diff(&before, &after, options);
         assert_eq!(kinds(&set), ["MODIFIED"], "{:?}", set.changes);
         assert_eq!(
@@ -200,7 +210,7 @@ fn a_block_edit_cancelled_by_its_instance_is_reported_on_both() {
         }
     }
 
-    let set = diff(&before, &after, DiffOptions::default());
+    let set = diff(&before, &after, by_reference());
     assert_eq!(kinds(&set), ["MODIFIED", "MODIFIED"], "{:?}", set.changes);
     let ids: Vec<EntityId> = set.changes.iter().map(Change::id).collect();
     assert_eq!(ids, [frame, insert]);
@@ -243,7 +253,7 @@ fn a_dimension_text_override_change_is_exactly_that_field() {
         }
     }
 
-    let set = diff(&before, &after, DiffOptions::default());
+    let set = diff(&before, &after, by_reference());
     assert_eq!(kinds(&set), ["MODIFIED"]);
     assert_eq!(field_paths(&set.changes[0]), ["text_override.data"]);
     let Change::Modified(m) = &set.changes[0] else {
@@ -287,7 +297,7 @@ fn a_measurement_change_under_an_unchanged_text_is_reported() {
         }
     }
 
-    let set = diff(&before, &after, DiffOptions::default());
+    let set = diff(&before, &after, by_reference());
     assert_eq!(kinds(&set), ["MODIFIED"]);
     assert_eq!(field_paths(&set.changes[0]), ["measurement"]);
     let Change::Modified(m) = &set.changes[0] else {
@@ -315,7 +325,7 @@ fn dropping_a_text_override_is_reported_as_the_kind_changing() {
         }
     }
 
-    let set = diff(&before, &after, DiffOptions::default());
+    let set = diff(&before, &after, by_reference());
     assert_eq!(kinds(&set), ["MODIFIED"]);
     let paths = field_paths(&set.changes[0]);
     assert!(

@@ -21,7 +21,7 @@ model.
 
 ## Status
 
-0.x. `diff(&before, &after, options)` matches two states by their entity reference IDs (`Matching::Reference`, the default) or, for two revisions that share no references, by entity type and shape within tolerance (`Matching::Geometry`, where only a match that is certain both ways counts and everything else is `UNKNOWN` with its candidates), and returns the exact change set -- added, removed and modified entities, every differing field of a modified one with its delta and a within/beyond verdict against an explicit tolerance -- in a fixed order, byte for byte the same every time. The rules are in
+0.x. `diff(&before, &after, options)` first judges from what the two files state whether they are one drawing (`lineage` -- `SAME`, `DIFFERENT` or `UNKNOWN`, from the header's fingerprint GUID, the reference IDs both hold and whether any of those names entities of two types), then matches them by their entity reference IDs (`Matching::Reference`) or by entity type and shape within tolerance (`Matching::Geometry`, where only a match that is certain both ways counts and everything else is `UNKNOWN` with its candidates) -- by default (`Matching::Auto`) by reference only when the lineage is `SAME`, and the change set says which mode it used and why; and returns the exact change set -- added, removed and modified entities, every differing field of a modified one with its delta and a within/beyond verdict against an explicit tolerance -- in a fixed order, byte for byte the same every time. The rules are in
 [docs/principles.md](docs/principles.md); the shape of what comes back is the contract in
 [docs/change-set.md](docs/change-set.md).
 

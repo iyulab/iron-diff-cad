@@ -83,5 +83,6 @@ pub fn diff(before: &CadDatabase, after: &CadDatabase, tolerance: Tolerance) -> 
         tolerance,
         changes,
         omitted: None,
+        lineage: None,
     }
 }

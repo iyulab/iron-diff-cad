@@ -56,6 +56,20 @@ The tolerances that were applied are written into the change set's header, so th
 
 The header names the mode that produced the change set, so the same output cannot be read in two meanings.
 
+### Lineage, and choosing the mode
+
+Reference matching is right only when the two states share their IDs because they are one drawing -- the same drawing edited or saved again. Two unrelated drawings share IDs by coincidence, and pairing those gives confident changes that are not there. So before matching, the two states' **lineage** is judged from what the files state, and the change set carries it (`lineage`) whatever the mode:
+
+| Verdict | When |
+|---|---|
+| `DIFFERENT` | Both files state a `$FINGERPRINTGUID` and the two differ; or an ID both states hold names entities of different types, neither of them an entity the reader could not decode (`UNKNOWN`). Within one lineage an ID keeps its entity. |
+| `SAME` | Not `DIFFERENT`; both files state the same `$FINGERPRINTGUID`; and the IDs both states hold are at least `threshold` of the smaller state's entities (by default half -- the caller may give another, and the change set states it). |
+| `UNKNOWN` | Anything else: a fingerprint not stated, or too few IDs shared. |
+
+The fingerprint is where a drawing started (the seed or template it was made from), not which drawing it is: unrelated drawings made from one template share it. A fingerprint that differs is therefore strong evidence of two lineages, one that is the same only weak evidence of one -- which is why `SAME` also asks for shared IDs. `lineage` states every fact the verdict was reached from: `fingerprint_equal` and `version_equal` (absent when either file does not state the GUID; a `$VERSIONGUID` that is the same as well means the same saved state), `shared`, `smaller`, `cross_type`, `threshold`.
+
+The caller chooses the mode, or `AUTO` (the default): `REFERENCE` when the lineage is `SAME`, `GEOMETRY` otherwise -- geometric matching never pairs entities it is not certain of, so a lineage that cannot be shown costs a `MODIFIED` entry becoming `REMOVED` plus `ADDED`, never a wrong pair. `matching` in the header is always the mode used, never `AUTO`. A caller that knows the two states are one drawing -- before and after an operation it made -- chooses `REFERENCE`, and `lineage` still tells whether the files bear that out.
+
 ### Geometric matching
 
 An entity's **shape** is every field of its model form except the `common` block (identity, provenance, confidence, layer, colour), the type tag and a reference a save names (a DIMENSION's `block_name` when it names an anonymous block -- section 1): the geometry and values that say what the entity *is*. A nested entity -- an INSERT's attributes -- is part of the shape without its own `common` block. A counterpart pair is compared on every field but identity: the reference ID and source handle are never compared fields, in the entity's `common` block or a nested entity's. Two entities have the same shape when they are of the same type and a field-by-field comparison (section 1, with the tolerance of section 2) finds no numeric field `BEYOND` and no non-numeric field different.
@@ -80,6 +94,8 @@ The serialized form follows the model's own convention: adjacently tagged, upper
 {
   "matching": "REFERENCE",
   "tolerance": { "length": 0.001, "angle": 0.0001 },
+  "lineage": { "verdict": "SAME", "fingerprint_equal": true, "version_equal": false,
+               "shared": 72, "smaller": 72, "cross_type": 0, "threshold": 0.5 },
   "changes": [
     { "type": "MODIFIED", "data": {
         "id": 289, "entity_type": "CIRCLE",
