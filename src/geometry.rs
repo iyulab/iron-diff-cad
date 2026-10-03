@@ -839,6 +839,57 @@ mod tests {
         }
     }
 
+    /// What finding counterparts costs, counted rather than timed: every
+    /// entity the window offers is one shape comparison. On a grid of lines
+    /// spaced well beyond the tolerance -- whole rows sharing a `y`, whole
+    /// columns sharing an `x` -- the window offers each entity exactly
+    /// itself, at 25 entities and at 16 times as many. Comparing every pair
+    /// would offer each entity all of them; a window over `x` alone would
+    /// offer it its whole column.
+    #[test]
+    fn the_window_offers_each_entity_only_its_own_neighbourhood() {
+        let g1: CadDatabase =
+            serde_json::from_str(include_str!("../tests/golden/g1.expected.json")).unwrap();
+        let template = g1
+            .tables
+            .block_records
+            .values()
+            .flat_map(|b| &b.entities)
+            .find_map(|e| match e {
+                Entity::Line(l) => Some(l.clone()),
+                _ => None,
+            })
+            .expect("G1 has a line");
+        let grid = |side: usize| -> Vec<Entity> {
+            (0..side * side)
+                .map(|k| {
+                    let mut l = template.clone();
+                    l.start_point.x = 10.0 * (k % side) as f64;
+                    l.start_point.y = 10.0 * (k / side) as f64;
+                    l.end_point.x = l.start_point.x + 1.0;
+                    l.end_point.y = l.start_point.y;
+                    Entity::Line(l)
+                })
+                .collect()
+        };
+        let tolerance = Tolerance::default();
+        for side in [5usize, 20] {
+            let entities = grid(side);
+            let items: Vec<Item<'_>> = entities
+                .iter()
+                .enumerate()
+                .map(|(i, e)| Item::new(EntityId::new(i as u64 + 1), e))
+                .collect();
+            let window = Window::new(&items, tolerance);
+            let offered: usize = items.iter().map(|x| window.around(x).len()).sum();
+            assert_eq!(offered, items.len(), "{} entities", items.len());
+            assert!(candidates(&items, &items, tolerance)
+                .iter()
+                .enumerate()
+                .all(|(i, js)| js.as_slice() == [i]));
+        }
+    }
+
     #[test]
     fn the_representative_point_is_the_first_point_field_present() {
         let line = json!({"start_point": {"x": 1.0, "y": 2.0, "z": 3.0}, "end_point": {"x": 4.0, "y": 5.0, "z": 6.0}});
