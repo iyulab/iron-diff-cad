@@ -78,13 +78,15 @@ Matching runs in two stages, and every pair either stage takes is compared on ev
 
 **Agreeing shapes.** An entity `x` of the first state and `y` of the second are counterparts when the match is certain both ways: `y` is the only entity of the second state with `x`'s shape, and `x` is the only entity of the first state with `y`'s. An entity with two or more such candidates, or with one candidate that is also another entity's only candidate, is `UNKNOWN` for the entity of the first state, with every candidate listed. Two coincident entities of which one was deleted are therefore two `UNKNOWN` entries, not a `REMOVED` and a match: which one went is not knowable from the geometry.
 
-**Changed shapes.** The entities no shape agreed with -- in either state -- are then compared with the entities of their type left in the other state. The **similarity** of two shapes is the share of their leaf values that agree: every leaf either shape holds is counted once (a field one side lacks, or an array element past the shorter array's end, counts as leaves that disagree, so the longer shape sets the scale), a number agrees when it is within its tolerance (section 2), any other leaf when it is equal, and an empty object or array counts as one leaf. `x` and `y` are counterparts when all of these hold, under thresholds the caller states or the defaults:
+**Changed shapes.** The entities no shape agreed with -- in either state -- are then compared with the entities of their type left in the other state. A shape's **leaves** are the numbers, strings, booleans, `null`s and empty objects or arrays it holds, each under the path section 1 would report it by. A leaf path is **informative** unless every entity of that type, in both states and paired or not, holds it with one and the same value: such a leaf -- a flat drawing's `z` and extrusion, a radius every hole shares -- is a fact about the type in these drawings and tells no two entities apart. The **similarity** of two shapes is the share of the informative leaf paths either holds whose values agree: a path only one of them holds disagrees (so the longer shape sets the scale), a number agrees when it is within its tolerance (section 2), any other leaf when it is equal; with nothing informative to count it is 0. `x` and `y` are counterparts when all of these hold, under thresholds the caller states or the defaults:
 
 1. their similarity is at least `min_similarity` (default `0.5`);
 2. `y` is the single entity most similar to `x`, and `x` the single entity most similar to `y` -- a tie is no pair;
 3. their similarity stands at least `min_margin` (default `0.1`) above the **runner-up**: the next highest similarity of `x` with another candidate, or of `y` with another entity of the first state, whichever is higher. With no runner-up the condition holds.
 
 Such a `MODIFIED` entry carries `matched_by`: the `similarity` and the `runner_up` (absent when there was none). An entity of the first state that does not pair this way but has entities whose similarity reaches `min_similarity` is `UNKNOWN`, with those candidates, their `similarities` in the same order, and which condition failed as the reason; one with none is `REMOVED`. An entity of the second state is `ADDED` when it is neither a counterpart nor anyone's candidate. The thresholds are written into the header as `pairing`, so the same output cannot be read against different ones; a `min_similarity` above 1 pairs nothing in this stage, since a pair whose every leaf agrees has the same shape.
+
+Scoring is quadratic in a type's left-over entities, so it is bounded by `max_pairs` in `pairing` (default ten million): types are taken in name order, and a type whose pairs do not fit in what is left of the bound is not scored. Its entities stay `REMOVED` and `ADDED`, and the header lists it in `unscored`, with the pairs it would have taken -- an entity is never left unpaired without the change set saying the stage did not look.
 
 ## 4. Order
 
@@ -118,13 +120,13 @@ The serialized form follows the model's own convention: adjacently tagged, upper
 }
 ```
 
-Under geometric matching the header also carries `pairing`, a pair whose shapes differ carries `matched_by`, and an `UNKNOWN` found by similarity carries `similarities`:
+Under geometric matching the header also carries `pairing` (and `unscored` when a type was not scored), a pair whose shapes differ carries `matched_by`, and an `UNKNOWN` found by similarity carries `similarities`:
 
 ```json
 {
   "matching": "GEOMETRY",
   "tolerance": { "length": 0.001, "angle": 0.0001 },
-  "pairing": { "min_similarity": 0.5, "min_margin": 0.1 },
+  "pairing": { "min_similarity": 0.5, "min_margin": 0.1, "max_pairs": 10000000 },
   "lineage": { "verdict": "UNKNOWN", "shared": 0, "smaller": 72, "cross_type": 0, "threshold": 0.5 },
   "changes": [
     { "type": "MODIFIED", "data": {
@@ -134,11 +136,11 @@ Under geometric matching the header also carries `pairing`, a pair whose shapes 
           { "path": "radius", "before": 5.0, "after": 6.0, "delta": 1.0,
             "tolerance": 0.001, "verdict": "BEYOND" }
         ],
-        "matched_by": { "similarity": 0.857, "runner_up": 0.714 } } },
+        "matched_by": { "similarity": 0.667, "runner_up": 0.333 } } },
     { "type": "UNKNOWN", "data": {
         "id": 301, "candidates": [412, 413],
         "reason": "2 entities of the second state are equally similar to this CIRCLE ...",
-        "similarities": [0.714, 0.714] } }
+        "similarities": [0.5, 0.5] } }
   ]
 }
 ```
@@ -159,5 +161,5 @@ The tests that keep this contract honest are of the "must never happen" kind, an
 - Values at `tolerance - ε`, `tolerance` and `tolerance + ε` produce `WITHIN`, `BEYOND` and `BEYOND`.
 - An injected wrong edit -- one that touches an entity it was not asked to -- always shows up as an additional entry.
 - The same two states, compared twice, produce byte-identical output.
-- Two revisions with no shared references: identical drawings produce an empty change set; one moved or resized entity produces one `MODIFIED` entry with exactly the fields a comparison by reference reports, and `REMOVED` plus `ADDED` when nothing but agreeing shapes may pair; two identical entities that swapped places produce `UNKNOWN` with both candidates; two coincident entities of which one was deleted produce `UNKNOWN` for both; two changed entities equally similar to two others produce `UNKNOWN` for both, never a pair; the result does not depend on the order the entities are listed in.
+- Two revisions with no shared references: identical drawings produce an empty change set; one moved or resized entity produces one `MODIFIED` entry with exactly the fields a comparison by reference reports, and `REMOVED` plus `ADDED` when nothing but agreeing shapes may pair; two identical entities that swapped places produce `UNKNOWN` with both candidates; two coincident entities of which one was deleted produce `UNKNOWN` for both; two changed entities equally similar to two others produce `UNKNOWN` for both, never a pair; two entities alike only in leaves every entity of their type shares are not paired; a type over the scoring bound is listed in `unscored`; the result does not depend on the order the entities are listed in.
 - Changes no picture shows are reported: a move below the tolerance (as `WITHIN`), a move below any output grid but beyond the tolerance, one of two coincident entities deleted, a layer or colour change that keeps the same colour, a block edit cancelled by its instance's scale. Each has an exact expected change set.

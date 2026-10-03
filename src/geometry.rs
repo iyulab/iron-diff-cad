@@ -12,12 +12,14 @@
 //! move looks like here.
 
 use crate::change_set::{
-    Change, ChangeSet, MatchedBy, Matching, Modified, Pairing, Tolerance, Unknown, Verdict,
+    Change, ChangeSet, MatchedBy, Matching, Modified, Pairing, Tolerance, Unknown, Unscored,
+    Verdict,
 };
-use crate::fields;
+use crate::fields::{self, Leaves};
 use crate::reference::{by_id, record};
 use serde_json::Value;
 use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet};
 use uncad_model::model::{Entity, EntityId};
 use uncad_model::CadDatabase;
 
@@ -29,6 +31,8 @@ struct Item<'a> {
     full: Value,
     /// The entity without its `common` block: what "shape" means here.
     shape: Value,
+    /// The shape's leaves, for scoring a pair whose shapes differ.
+    leaves: Leaves,
     key: SortKey,
     /// See [`anchor`].
     anchor: Option<[f64; 2]>,
@@ -38,6 +42,7 @@ impl<'a> Item<'a> {
     fn new(id: EntityId, entity: &'a Entity) -> Self {
         let full = serde_json::to_value(entity).expect("the model serializes");
         let shape = fields::shape(&full);
+        let leaves = fields::leaves(&shape);
         let key = SortKey::of(entity.type_name(), &full);
         let anchor = anchor(&full, &shape);
         Item {
@@ -45,6 +50,7 @@ impl<'a> Item<'a> {
             entity,
             full,
             shape,
+            leaves,
             key,
             anchor,
         }
@@ -370,13 +376,51 @@ impl Top {
     }
 }
 
+/// The leaf paths every entity of `items` holds with one and the same
+/// value: a fact about the type in these drawings, not about any one
+/// entity, so it tells no pair apart (a flat drawing's `z` and extrusion,
+/// a radius every hole shares).
+fn uninformative<'i, 'a: 'i>(items: impl Iterator<Item = &'i Item<'a>>) -> BTreeSet<String> {
+    // path -> (how many items hold it, the first value, whether all agree)
+    let mut seen: BTreeMap<&str, (usize, &Value, bool)> = BTreeMap::new();
+    let mut n = 0;
+    for item in items {
+        n += 1;
+        for (path, value) in &item.leaves {
+            seen.entry(path)
+                .and_modify(|(count, first, same)| {
+                    *count += 1;
+                    *same &= *first == value;
+                })
+                .or_insert((1, value, true));
+        }
+    }
+    seen.into_iter()
+        .filter(|&(_, (count, _, same))| same && count == n)
+        .map(|(path, _)| path.to_string())
+        .collect()
+}
+
+/// What the second stage made of the entities of the first state, by index
+/// (none for a pair that does not differ); which entities of the second
+/// state are spoken for -- a counterpart or a listed candidate -- so that
+/// only the rest are `ADDED`; and the types it did not score.
+struct Paired {
+    entries: Vec<(usize, Change)>,
+    spoken_for: Vec<bool>,
+    unscored: Vec<Unscored>,
+}
+
 /// The second stage of geometric matching: entities of the first state
 /// (`removed`) and of the second (`added`) that no shape agreed with, paired
-/// by similarity where [`Pairing`] singles a pair out. Returns the entries
-/// for the entities of the first state, by index (none for a pair that
-/// does not differ), and which entities of the second
-/// state are spoken for -- a counterpart or a listed candidate -- so that
-/// only the rest are `ADDED`.
+/// by similarity where [`Pairing`] singles a pair out.
+///
+/// Scoring is quadratic in a type's left-over entities, so it is bounded:
+/// types are taken in name order, and a type whose pairs do not fit in what
+/// is left of [`Pairing::max_pairs`] is not scored -- its entities stay
+/// `REMOVED` and `ADDED`, and the change set lists it. The scores are not
+/// kept: a first pass finds each row's and column's highest two, and only
+/// an `UNKNOWN` entry's row is scored again for its candidate list.
 fn pair_changed(
     b: &[Item<'_>],
     a: &[Item<'_>],
@@ -384,11 +428,13 @@ fn pair_changed(
     added: &[usize],
     tolerance: Tolerance,
     pairing: Pairing,
-) -> (Vec<(usize, Change)>, Vec<bool>) {
-    let mut entries = Vec::new();
-    let mut spoken_for = vec![false; a.len()];
-    // Only entities of one type are compared; `removed` and `added` are in
-    // index order, so each type's run is found by filtering.
+) -> Paired {
+    let mut out = Paired {
+        entries: Vec::new(),
+        spoken_for: vec![false; a.len()],
+        unscored: Vec::new(),
+    };
+    let mut budget = pairing.max_pairs;
     let mut types: Vec<&str> = removed
         .iter()
         .map(|&i| b[i].key.entity_type.as_str())
@@ -406,25 +452,34 @@ fn pair_changed(
             .copied()
             .filter(|&j| a[j].key.entity_type == t)
             .collect();
-        if cs.is_empty() {
+        let pairs = rs.len() as u64 * cs.len() as u64;
+        if cs.is_empty() || pairs > budget {
+            if !cs.is_empty() {
+                out.unscored.push(Unscored {
+                    entity_type: t.to_string(),
+                    pairs,
+                });
+            }
             for &i in &rs {
-                entries.push((i, Change::Removed(record(b[i].entity))));
+                out.entries.push((i, Change::Removed(record(b[i].entity))));
             }
             continue;
         }
-        // The table, row by row: rows are `rs`, columns `cs`.
-        let scores: Vec<Vec<f64>> = rs
-            .iter()
-            .map(|&i| {
-                cs.iter()
-                    .map(|&j| fields::similarity(&b[i].shape, &a[j].shape, tolerance))
-                    .collect()
-            })
-            .collect();
+        budget -= pairs;
+        // Every entity of the type in both states, paired or not, decides
+        // which leaves say anything.
+        let flat = uninformative(
+            b.iter()
+                .chain(a.iter())
+                .filter(|item| item.key.entity_type == t),
+        );
+        let score =
+            |i: usize, j: usize| fields::similarity(&b[i].leaves, &a[j].leaves, tolerance, &flat);
         let mut rows = vec![Top::new(); rs.len()];
         let mut columns = vec![Top::new(); cs.len()];
-        for (r, row) in scores.iter().enumerate() {
-            for (c, &s) in row.iter().enumerate() {
+        for (r, &i) in rs.iter().enumerate() {
+            for (c, &j) in cs.iter().enumerate() {
+                let s = score(i, j);
                 rows[r].offer(s, c);
                 columns[c].offer(s, r);
             }
@@ -433,7 +488,7 @@ fn pair_changed(
             let x = &b[i];
             let top = rows[r];
             if top.best < pairing.min_similarity {
-                entries.push((i, Change::Removed(record(x.entity))));
+                out.entries.push((i, Change::Removed(record(x.entity))));
                 continue;
             }
             let c = top.at;
@@ -445,26 +500,25 @@ fn pair_changed(
             let clear = runner_up.is_none_or(|u| top.best - u >= pairing.min_margin);
             if mutual && clear {
                 let y = &a[cs[c]];
-                spoken_for[cs[c]] = true;
+                out.spoken_for[cs[c]] = true;
                 let matched_by = MatchedBy {
                     similarity: top.best,
                     runner_up,
                 };
                 if let Some(change) = modified(x, y, tolerance, Some(matched_by)) {
-                    entries.push((i, change));
+                    out.entries.push((i, change));
                 }
                 continue;
             }
             // Listed by reference ID, each with its score.
-            let mut listed: Vec<(EntityId, f64)> = scores[r]
-                .iter()
-                .enumerate()
-                .filter(|&(_, &s)| s >= pairing.min_similarity)
-                .map(|(c, &s)| {
-                    spoken_for[cs[c]] = true;
-                    (a[cs[c]].id, s)
-                })
-                .collect();
+            let mut listed: Vec<(EntityId, f64)> = Vec::new();
+            for &j in &cs {
+                let s = score(i, j);
+                if s >= pairing.min_similarity {
+                    out.spoken_for[j] = true;
+                    listed.push((a[j].id, s));
+                }
+            }
             listed.sort_by_key(|&(id, _)| id);
             let reason = if top.ties > 1 {
                 format!(
@@ -489,7 +543,7 @@ fn pair_changed(
                     share(runner_up.expect("a margin short of the minimum has a runner-up"))
                 )
             };
-            entries.push((
+            out.entries.push((
                 i,
                 Change::Unknown(Unknown {
                     id: x.id,
@@ -500,7 +554,7 @@ fn pair_changed(
             ));
         }
     }
-    (entries, spoken_for)
+    out
 }
 
 /// A similarity as a reader takes it in: a percentage, to one decimal.
@@ -589,8 +643,8 @@ pub fn diff(
     let added: Vec<usize> = (0..a.len())
         .filter(|&j| candidates_a[j].is_empty())
         .collect();
-    let (paired, spoken_for) = pair_changed(&b, &a, &removed, &added, tolerance, pairing);
-    for (i, change) in paired {
+    let paired = pair_changed(&b, &a, &removed, &added, tolerance, pairing);
+    for (i, change) in paired.entries {
         found[i] = Some(change);
     }
 
@@ -600,7 +654,7 @@ pub fn diff(
         .filter_map(|(i, c)| Some((b[i].key.clone(), c?)))
         .collect();
     for &j in &added {
-        if !spoken_for[j] {
+        if !paired.spoken_for[j] {
             changes.push((a[j].key.clone(), Change::Added(record(a[j].entity))));
         }
     }
@@ -613,6 +667,7 @@ pub fn diff(
         matching: Matching::Geometry,
         tolerance,
         pairing: Some(pairing),
+        unscored: paired.unscored,
         changes: changes.into_iter().map(|(_, c)| c).collect(),
         omitted: None,
         lineage: None,

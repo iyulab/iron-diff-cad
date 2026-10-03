@@ -155,9 +155,10 @@ fn a_moved_entity_is_paired_by_similarity_with_the_reason_stated() {
     let paths: Vec<&str> = m.fields.iter().map(|f| f.path.as_str()).collect();
     assert_eq!(paths, ["center.x"]);
     // Every other hole was paired by its unchanged shape, so the moved one
-    // has no rival: six of its seven leaves agree.
+    // has no rival. Every circle of G1 lies flat and has radius 5, so only
+    // the center's x and y tell circles apart; the y agrees.
     let matched_by = m.matched_by.expect("paired by similarity");
-    assert_eq!(matched_by.similarity, 6.0 / 7.0);
+    assert_eq!(matched_by.similarity, 0.5);
     assert_eq!(matched_by.runner_up, None);
 }
 
@@ -277,8 +278,8 @@ fn a_resized_hole_and_its_remeasured_dimension_read_as_by_reference() {
 #[test]
 fn two_holes_changed_alike_pair_when_each_singles_the_other_out() {
     // The two lower holes, (20, 20) and (180, 20), both resized 5 -> 6:
-    // each new hole agrees with its old one on everything but the radius,
-    // and with the other old one on less (the x differs too).
+    // of what tells circles apart here (x, y, radius), each new hole agrees
+    // with its old one on two, and with the other old one on one (the y).
     let before = g1();
     let holes = hole_ids(&before);
     let mut after = reissued(&before);
@@ -293,27 +294,26 @@ fn two_holes_changed_alike_pair_when_each_singles_the_other_out() {
         };
         assert_eq!((m.id, m.counterpart), (h, Some(after_id(h))));
         let matched_by = m.matched_by.expect("paired by similarity");
-        assert_eq!(matched_by.similarity, 6.0 / 7.0);
-        assert_eq!(matched_by.runner_up, Some(5.0 / 7.0));
+        assert_eq!(matched_by.similarity, 2.0 / 3.0);
+        assert_eq!(matched_by.runner_up, Some(1.0 / 3.0));
     }
 }
 
 #[test]
 fn two_holes_equally_similar_to_two_others_are_unknown_never_a_pick() {
-    // Two holes at (0, 0) and (50, 50) become two at (0, 50) and (50, 0),
-    // resized: each old hole shares one coordinate with each new one.
-    // Nothing tells the pairs apart, so neither is chosen.
+    // Two holes at (0, 0) and (50, 50) move to (0, 50) and (50, 0): each
+    // old hole shares one coordinate with each new one, and the radius is
+    // every circle's. Nothing tells the pairs apart, so neither is chosen.
     let mut before = g1();
     let holes = hole_ids(&before);
-    let place = |db: &mut CadDatabase, id: EntityId, x: f64, y: f64, r: f64| {
+    let place = |db: &mut CadDatabase, id: EntityId, x: f64, y: f64| {
         set_center(db, id, Point3D { x, y, z: 0.0 });
-        set_radius(db, id, r);
     };
-    place(&mut before, holes[0], 0.0, 0.0, 5.0);
-    place(&mut before, holes[1], 50.0, 50.0, 5.0);
+    place(&mut before, holes[0], 0.0, 0.0);
+    place(&mut before, holes[1], 50.0, 50.0);
     let mut after = reissued(&before);
-    place(&mut after, after_id(holes[0]), 0.0, 50.0, 6.0);
-    place(&mut after, after_id(holes[1]), 50.0, 0.0, 6.0);
+    place(&mut after, after_id(holes[0]), 0.0, 50.0);
+    place(&mut after, after_id(holes[1]), 50.0, 0.0);
 
     let set = diff(&before, &after, geometry());
     assert_eq!(set.changes.len(), 2, "{:?}", set.changes);
@@ -322,7 +322,7 @@ fn two_holes_equally_similar_to_two_others_are_unknown_never_a_pick() {
             panic!("expected UNKNOWN, got {change:?}");
         };
         assert_eq!(u.candidates, [after_id(holes[0]), after_id(holes[1])]);
-        assert_eq!(u.similarities, Some(vec![5.0 / 7.0, 5.0 / 7.0]));
+        assert_eq!(u.similarities, Some(vec![0.5, 0.5]));
         assert!(
             u.reason
                 .starts_with("2 entities of the second state are equally similar"),
@@ -333,9 +333,81 @@ fn two_holes_equally_similar_to_two_others_are_unknown_never_a_pick() {
 }
 
 #[test]
+fn two_circles_alike_only_in_what_every_circle_shares_are_not_paired() {
+    // One hole moved diagonally and resized: of what tells circles apart
+    // here, nothing agrees. That both lie flat is true of every circle, and
+    // is no evidence the two are one.
+    let before = g1();
+    let hole = hole_ids(&before)[0];
+    let mut after = reissued(&before);
+    set_center(
+        &mut after,
+        after_id(hole),
+        Point3D {
+            x: 70.0,
+            y: 45.0,
+            z: 0.0,
+        },
+    );
+    set_radius(&mut after, after_id(hole), 6.0);
+    let set = diff(&before, &after, geometry());
+    let kinds: Vec<&str> = set
+        .changes
+        .iter()
+        .map(|c| match c {
+            Change::Removed(_) => "REMOVED",
+            Change::Added(_) => "ADDED",
+            other => panic!("expected REMOVED and ADDED, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(kinds, ["REMOVED", "ADDED"]);
+}
+
+#[test]
+fn a_type_with_more_pairs_than_the_budget_is_listed_as_unscored() {
+    // Two holes resized: 2 x 2 = 4 pairs to score. With 3 allowed, the
+    // circles are not scored, and the change set says so.
+    let before = g1();
+    let holes = hole_ids(&before);
+    let mut after = reissued(&before);
+    for &h in &holes[..2] {
+        set_radius(&mut after, after_id(h), 6.0);
+    }
+    let options = |max_pairs| DiffOptions {
+        pairing: Pairing {
+            max_pairs,
+            ..Pairing::default()
+        },
+        ..geometry()
+    };
+    let set = diff(&before, &after, options(3));
+    assert_eq!(set.unscored.len(), 1);
+    assert_eq!(set.unscored[0].entity_type, "CIRCLE");
+    assert_eq!(set.unscored[0].pairs, 4);
+    assert_eq!(set.changes.len(), 4, "{:?}", set.changes);
+    assert!(set
+        .changes
+        .iter()
+        .all(|c| matches!(c, Change::Removed(_) | Change::Added(_))));
+    let json = set.to_json(false).unwrap();
+    assert!(
+        json.contains(r#""unscored":[{"entity_type":"CIRCLE","pairs":4}]"#),
+        "{json}"
+    );
+
+    // Exactly enough is enough, and nothing is listed.
+    let set = diff(&before, &after, options(4));
+    assert!(set.unscored.is_empty());
+    assert!(!set.to_json(false).unwrap().contains("unscored"));
+    assert!(set.changes.iter().all(|c| matches!(c, Change::Modified(_))));
+}
+
+#[test]
 fn a_pair_too_close_to_its_runner_up_is_unknown() {
     // The two lower holes resized as before, under a margin the scores
-    // cannot clear (6/7 against 5/7): each is UNKNOWN with both candidates.
+    // cannot clear (2/3 against 1/3): each is UNKNOWN. Only its own resized
+    // self reaches the threshold, so that is its one candidate; the runner-up
+    // is named in the reason.
     let before = g1();
     let holes = hole_ids(&before);
     let mut after = reissued(&before);
@@ -344,21 +416,22 @@ fn a_pair_too_close_to_its_runner_up_is_unknown() {
     }
     let options = DiffOptions {
         pairing: Pairing {
-            min_margin: 0.2,
+            min_margin: 0.4,
             ..Pairing::default()
         },
         ..geometry()
     };
     let set = diff(&before, &after, options);
-    assert_eq!(set.pairing.map(|p| p.min_margin), Some(0.2));
+    assert_eq!(set.pairing.map(|p| p.min_margin), Some(0.4));
     assert_eq!(set.changes.len(), 2, "{:?}", set.changes);
-    for change in &set.changes {
+    for (change, &h) in set.changes.iter().zip(&holes[..2]) {
         let Change::Unknown(u) = change else {
             panic!("expected UNKNOWN, got {change:?}");
         };
-        assert_eq!(u.candidates, [after_id(holes[0]), after_id(holes[1])]);
+        assert_eq!(u.candidates, [after_id(h)]);
+        assert_eq!(u.similarities, Some(vec![2.0 / 3.0]));
         assert!(
-            u.reason.contains("stands less than 0.2 above the next"),
+            u.reason.contains("stands less than 0.4 above the next"),
             "{}",
             u.reason
         );

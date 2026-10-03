@@ -83,6 +83,7 @@ pub fn diff(before: &CadDatabase, after: &CadDatabase, tolerance: Tolerance) -> 
         matching: Matching::Reference,
         tolerance,
         pairing: None,
+        unscored: Vec::new(),
         changes,
         omitted: None,
         lineage: None,

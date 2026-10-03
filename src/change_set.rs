@@ -57,7 +57,8 @@ impl Default for Tolerance {
 /// type, are scored by their [similarity](MatchedBy::similarity). They are
 /// counterparts only when the score reaches `min_similarity`, each is the
 /// other's single highest score, and the next highest score involving
-/// either of them is at least `min_margin` lower.
+/// either of them is at least `min_margin` lower. At most `max_pairs`
+/// pairs are scored in one comparison ([`ChangeSet::unscored`]).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Pairing {
     /// The least similarity a pair needs. Above 1 nothing is paired this
@@ -67,6 +68,10 @@ pub struct Pairing {
     /// How far the pair's similarity must stand above the next highest
     /// score of either entity.
     pub min_margin: f64,
+    /// The most pairs scored in one comparison. Scoring is quadratic in a
+    /// type's left-over entities; this bounds the work a pair of drawings
+    /// can ask for.
+    pub max_pairs: u64,
 }
 
 impl Default for Pairing {
@@ -75,6 +80,7 @@ impl Default for Pairing {
         Pairing {
             min_similarity: 0.5,
             min_margin: 0.1,
+            max_pairs: 10_000_000,
         }
     }
 }
@@ -84,14 +90,25 @@ impl Default for Pairing {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct MatchedBy {
-    /// The share of the two shapes' fields that agree within tolerance,
-    /// counted over every leaf value either shape holds (contract,
-    /// section 3).
+    /// The share of the two shapes' informative leaf values that agree
+    /// within tolerance (contract, section 3).
     pub similarity: f64,
     /// The next highest similarity of either entity with another entity
     /// of its type left without a counterpart; absent when there is none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runner_up: Option<f64>,
+}
+
+/// An entity type geometric matching did not score for changed entities:
+/// its left-over entities would have needed more pairs than were left of
+/// [`Pairing::max_pairs`]. They are `REMOVED` and `ADDED`, as if the second
+/// stage had not run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct Unscored {
+    pub entity_type: String,
+    /// The pairs scoring the type would have taken.
+    pub pairs: u64,
 }
 
 /// Whether a numeric difference is within the tolerance or beyond it.
@@ -236,6 +253,10 @@ pub struct ChangeSet {
     /// matching; absent under reference matching.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pairing: Option<Pairing>,
+    /// The types whose changed entities geometric matching did not score,
+    /// in name order; absent when it scored every type it had to.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unscored: Vec<Unscored>,
     /// Whether the two states are of one lineage, and why
     /// ([`crate::lineage`]): what chose the mode under `AUTO`, and under a
     /// mode the caller chose, whether the files bear that choice out.
@@ -317,6 +338,7 @@ impl ChangeSet {
             matching: self.matching,
             tolerance: self.tolerance,
             pairing: self.pairing,
+            unscored: self.unscored.clone(),
             lineage: self.lineage.clone(),
             changes,
             omitted: Some(omitted),

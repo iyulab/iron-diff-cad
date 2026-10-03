@@ -35,7 +35,7 @@ mod reference;
 
 pub use change_set::{
     Change, ChangeSet, EntityRecord, FieldChange, MatchedBy, Matching, Modified, Omit, Omitted,
-    Pairing, Side, Tolerance, Unknown, Verdict,
+    Pairing, Side, Tolerance, Unknown, Unscored, Verdict,
 };
 pub use lineage::{lineage, Lineage, LineageVerdict, DEFAULT_SHARED_THRESHOLD};
 
