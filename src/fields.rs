@@ -22,17 +22,37 @@ const ANGLE_FIELDS: [&str; 4] = ["rotation", "start_angle", "end_angle", "angle"
 /// attributes).
 const IDENTITY_FIELDS: [&str; 2] = ["id", "source_handle"];
 
+/// Fields named by a save, not by the drawing, per entity type: a
+/// dimension's anonymous block (`*D3`) is renumbered when the file is saved
+/// again while the dimension stays as it was, and what that block draws is
+/// what the dimension's own fields already say. Neither part of the shape
+/// nor a compared field.
+const SAVE_ASSIGNED: [(&str, &str); 1] = [("DIMENSION", "block_name")];
+
+/// Whether `key` of an entity of type `entity_type` is in [`SAVE_ASSIGNED`].
+fn save_assigned(entity_type: Option<&Value>, key: &str) -> bool {
+    let entity_type = entity_type.and_then(Value::as_str);
+    SAVE_ASSIGNED
+        .iter()
+        .any(|&(t, k)| Some(t) == entity_type && k == key)
+}
+
 /// An entity's JSON form without its `common` block and type tag: the
 /// geometry and values that say what the entity *is*, as opposed to where
 /// it came from and what it is called. What geometric matching compares.
 /// A nested entity (an INSERT's attributes) is part of the shape without
-/// its own `common` block, for the same reason.
+/// its own `common` block, for the same reason; so is a field a save names
+/// ([`SAVE_ASSIGNED`]).
 pub fn shape(entity: &Value) -> Value {
     match entity {
         Value::Object(fields) => Value::Object(
             fields
                 .iter()
-                .filter(|(k, _)| k.as_str() != "common" && k.as_str() != "type")
+                .filter(|(k, _)| {
+                    k.as_str() != "common"
+                        && k.as_str() != "type"
+                        && !save_assigned(fields.get("type"), k)
+                })
                 .map(|(k, v)| (k.clone(), without_common(v)))
                 .collect(),
         ),
@@ -87,11 +107,17 @@ fn walk(
     );
     match (before, after) {
         (Value::Object(b), Value::Object(a)) => {
-            // Identity fields are never compared -- see IDENTITY_FIELDS.
+            // Identity fields are never compared -- see IDENTITY_FIELDS --
+            // and nor is a field a save names, of an entity whose type both
+            // sides share (SAVE_ASSIGNED).
             let mut keys: Vec<&String> = b.keys().chain(a.keys()).collect();
             keys.sort();
             keys.dedup();
+            let entity_type = b.get("type").filter(|t| a.get("type") == Some(*t));
             for key in keys {
+                if path.is_empty() && save_assigned(entity_type, key) {
+                    continue;
+                }
                 if key == "common" {
                     if let (Some(Value::Object(bc)), Some(Value::Object(ac))) =
                         (b.get(key), a.get(key))

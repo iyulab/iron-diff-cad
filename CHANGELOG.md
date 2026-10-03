@@ -15,6 +15,10 @@ bumps the minor version.
 - Under geometric matching, a nested entity's `common` block (an INSERT's attributes) is no
   longer part of the shape, and its reference ID and source handle are never compared fields. An
   unchanged INSERT with attributes was reported as `REMOVED` plus `ADDED` between two revisions.
+- A DIMENSION's `block_name` is neither a compared field nor part of the shape: a save renumbers
+  the anonymous block a dimension is drawn with (`*D3` to `*D4`) while the dimension stays as it
+  was, so the same drawing saved again reported every dimension as `MODIFIED` under reference
+  matching and as `REMOVED` plus `ADDED` under geometric matching.
 
 ## [0.3.0] - 2026-10-02
 

@@ -280,3 +280,48 @@ fn the_same_reference_under_another_type_is_removed_plus_added_never_modified() 
         set.changes
     );
 }
+
+/// The same drawing saved again: a save renumbers the anonymous blocks that
+/// draw the dimensions (`*D1` becomes `*D11`, ...), block records included,
+/// while every dimension stays as it was.
+fn dimension_blocks_renumbered(db: &CadDatabase) -> CadDatabase {
+    fn renamed(name: &str) -> String {
+        match name.strip_prefix("*D") {
+            Some(n) => format!("*D{}", n.parse::<u32>().expect("a numbered block") + 10),
+            None => name.to_string(),
+        }
+    }
+    /// Renames the block of every dimension in `entities`; how many there were.
+    fn rename(entities: &mut serde_json::Value) -> usize {
+        let mut n = 0;
+        for e in entities.as_array_mut().expect("an entity list") {
+            if e["type"] == "DIMENSION" {
+                let name = renamed(e["block_name"]["data"].as_str().expect("a named block"));
+                e["block_name"]["data"] = serde_json::Value::from(name);
+                n += 1;
+            }
+        }
+        n
+    }
+    let mut value = serde_json::to_value(db).expect("the model serializes");
+    let mut seen = rename(&mut value["entities"]);
+    let records = value["tables"]["block_records"]
+        .as_object_mut()
+        .expect("block records");
+    for (name, mut record) in std::mem::take(records) {
+        seen += rename(&mut record["entities"]);
+        let name = renamed(&name);
+        record["name"] = serde_json::Value::from(name.clone());
+        records.insert(name, record);
+    }
+    assert!(seen > 0, "the drawing has dimensions");
+    serde_json::from_value(value).expect("the renumbered model deserializes")
+}
+
+#[test]
+fn a_dimension_whose_anonymous_block_a_save_renumbered_is_not_modified() {
+    let before = g1();
+    let after = dimension_blocks_renumbered(&before);
+    let set = diff(&before, &after, DiffOptions::default());
+    assert!(set.is_empty(), "{:?}", set.changes);
+}
