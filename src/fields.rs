@@ -17,21 +17,41 @@ const ANGLE_FIELDS: [&str; 4] = ["rotation", "start_angle", "end_angle", "angle"
 
 /// Fields of `common` that are identity, not content: the reference ID is
 /// the matching key under reference matching, and the source handle is
-/// what the model issued that ID from. Neither is ever a compared field.
+/// what the model issued that ID from. Neither is ever a compared field --
+/// in an entity's own `common` block or in a nested entity's (an INSERT's
+/// attributes).
 const IDENTITY_FIELDS: [&str; 2] = ["id", "source_handle"];
 
 /// An entity's JSON form without its `common` block and type tag: the
 /// geometry and values that say what the entity *is*, as opposed to where
 /// it came from and what it is called. What geometric matching compares.
+/// A nested entity (an INSERT's attributes) is part of the shape without
+/// its own `common` block, for the same reason.
 pub fn shape(entity: &Value) -> Value {
     match entity {
         Value::Object(fields) => Value::Object(
             fields
                 .iter()
                 .filter(|(k, _)| k.as_str() != "common" && k.as_str() != "type")
-                .map(|(k, v)| (k.clone(), v.clone()))
+                .map(|(k, v)| (k.clone(), without_common(v)))
                 .collect(),
         ),
+        other => other.clone(),
+    }
+}
+
+/// `value` with every `common` block inside it left out. Every `common` in
+/// the model's form is an entity's [`EntityCommon`](uncad_model::model::EntityCommon).
+fn without_common(value: &Value) -> Value {
+    match value {
+        Value::Object(fields) => Value::Object(
+            fields
+                .iter()
+                .filter(|(k, _)| k.as_str() != "common")
+                .map(|(k, v)| (k.clone(), without_common(v)))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(without_common).collect()),
         other => other.clone(),
     }
 }
@@ -72,7 +92,7 @@ fn walk(
             keys.sort();
             keys.dedup();
             for key in keys {
-                if path.is_empty() && key == "common" {
+                if key == "common" {
                     if let (Some(Value::Object(bc)), Some(Value::Object(ac))) =
                         (b.get(key), a.get(key))
                     {
@@ -83,7 +103,8 @@ fn walk(
                             if IDENTITY_FIELDS.contains(&c.as_str()) {
                                 continue;
                             }
-                            walk(&join("common", c), bc.get(c), ac.get(c), tolerance, out);
+                            let at = join(&join(path, "common"), c);
+                            walk(&at, bc.get(c), ac.get(c), tolerance, out);
                         }
                         continue;
                     }
@@ -221,6 +242,37 @@ mod tests {
             shape(&entity),
             json!({"radius": 5.0, "center": {"x": 1.0, "y": 2.0, "z": 0.0}})
         );
+    }
+
+    fn insert_with_attribute(id: u64, layer: &str) -> Value {
+        json!({"type": "INSERT", "common": {"id": id, "source_handle": {"type": "RESOLVED", "data": format!("{id:X}")}},
+               "block_name": "TITLE",
+               "attribs": [{"common": {"id": id + 1, "source_handle": {"type": "RESOLVED", "data": format!("{:X}", id + 1)}, "layer": layer},
+                            "tag": "PART", "value": "A-1"}]})
+    }
+
+    #[test]
+    fn a_nested_entity_is_part_of_the_shape_without_its_common_block() {
+        let shape = shape(&insert_with_attribute(1, "0"));
+        assert_eq!(
+            shape,
+            json!({"block_name": "TITLE", "attribs": [{"tag": "PART", "value": "A-1"}]})
+        );
+        assert_eq!(shape, super::shape(&insert_with_attribute(0x500, "0")));
+    }
+
+    #[test]
+    fn a_nested_entity_identity_is_never_a_compared_field_but_its_layer_is() {
+        let tol = Tolerance::default();
+        let before = insert_with_attribute(1, "0");
+        assert!(compare(&before, &insert_with_attribute(0x500, "0"), tol)
+            .iter()
+            .all(|f| !f.path.starts_with("attribs")));
+        let paths: Vec<String> = compare(&before, &insert_with_attribute(1, "NOTES"), tol)
+            .into_iter()
+            .map(|f| f.path)
+            .collect();
+        assert_eq!(paths, ["attribs[0].common.layer"]);
     }
 
     #[test]

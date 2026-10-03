@@ -22,17 +22,32 @@ fn g6() -> CadDatabase {
 const REISSUE: u64 = 0x1000;
 
 /// The same drawing with every entity's reference ID (and the handle it
-/// was issued from) reissued: what a second revision looks like to a diff.
+/// was issued from) reissued -- nested entities too, such as an INSERT's
+/// attributes: what a second revision looks like to a diff.
 fn reissued(db: &CadDatabase) -> CadDatabase {
     let mut value = serde_json::to_value(db).expect("the model serializes");
-    fn reissue_entities(entities: &mut Value) {
-        for e in entities.as_array_mut().expect("an entity list") {
-            let common = e["common"].as_object_mut().expect("common");
-            let id = common["id"].as_u64().expect("an id") + REISSUE;
-            common["id"] = Value::from(id);
-            common["source_handle"] =
-                serde_json::json!({"type": "RESOLVED", "data": format!("{id:X}")});
+    fn reissue(v: &mut Value) {
+        match v {
+            Value::Object(fields) => {
+                if let Some(Value::Object(common)) = fields.get_mut("common") {
+                    let id = common["id"].as_u64().expect("an id") + REISSUE;
+                    common["id"] = Value::from(id);
+                    common["source_handle"] =
+                        serde_json::json!({"type": "RESOLVED", "data": format!("{id:X}")});
+                }
+                for (key, field) in fields.iter_mut() {
+                    if key != "common" {
+                        reissue(field);
+                    }
+                }
+            }
+            Value::Array(items) => items.iter_mut().for_each(reissue),
+            _ => {}
         }
+    }
+    fn reissue_entities(entities: &mut Value) {
+        assert!(entities.is_array(), "an entity list");
+        reissue(entities);
     }
     reissue_entities(&mut value["entities"]);
     for block in value["tables"]["block_records"]

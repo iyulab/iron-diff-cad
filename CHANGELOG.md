@@ -7,6 +7,15 @@ bumps the minor version.
 
 ## [Unreleased]
 
+### Fixed
+
+- Under reference matching, a reference held by entities of different types in the two states
+  is reported as `REMOVED` plus `ADDED`, no longer as a `MODIFIED` entity whose fields include
+  the type. Two unrelated drawings whose IDs happen to coincide gave confident field changes.
+- Under geometric matching, a nested entity's `common` block (an INSERT's attributes) is no
+  longer part of the shape, and its reference ID and source handle are never compared fields. An
+  unchanged INSERT with attributes was reported as `REMOVED` plus `ADDED` between two revisions.
+
 ## [0.3.0] - 2026-10-02
 
 ### Changed

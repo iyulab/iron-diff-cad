@@ -46,6 +46,13 @@ pub fn diff(before: &CadDatabase, after: &CadDatabase, tolerance: Tolerance) -> 
         match (b.get(&id), a.get(&id)) {
             (Some(x), None) => changes.push(Change::Removed(record(x))),
             (None, Some(y)) => changes.push(Change::Added(record(y))),
+            (Some(x), Some(y)) if x.type_name() != y.type_name() => {
+                // No operation on one model gives a reference another entity
+                // type, so the two are different entities that happen to
+                // carry the same ID -- never one entity's field changes.
+                changes.push(Change::Removed(record(x)));
+                changes.push(Change::Added(record(y)));
+            }
             (Some(x), Some(y)) => {
                 if x == y {
                     continue;

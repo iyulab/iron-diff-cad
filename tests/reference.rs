@@ -222,3 +222,61 @@ fn the_json_form_is_adjacently_tagged() {
     let back: iron_diff_cad::ChangeSet = serde_json::from_str(&json).unwrap();
     assert_eq!(back.changes.len(), 1);
 }
+
+/// The drawing with the entity `id` replaced, wherever it appears, by a
+/// LINE carrying the same `common` block -- the same reference ID for an
+/// entity of another type, which no operation on one model produces.
+fn retyped_as_line(db: &CadDatabase, id: EntityId) -> CadDatabase {
+    let mut value = serde_json::to_value(db).expect("the model serializes");
+    let mut hit = 0;
+    let mut retype = |entities: &mut serde_json::Value| {
+        for e in entities.as_array_mut().expect("an entity list") {
+            if e["common"]["id"].as_u64() == Some(id.value()) {
+                *e = serde_json::json!({
+                    "type": "LINE",
+                    "common": e["common"].clone(),
+                    "start_point": {"x": 0.0, "y": 0.0, "z": 0.0},
+                    "end_point": {"x": 1.0, "y": 0.0, "z": 0.0},
+                    "thickness": 0.0,
+                    "extrusion": {"x": 0.0, "y": 0.0, "z": 1.0}
+                });
+                hit += 1;
+            }
+        }
+    };
+    retype(&mut value["entities"]);
+    for block in value["tables"]["block_records"]
+        .as_object_mut()
+        .expect("block records")
+        .values_mut()
+    {
+        retype(&mut block["entities"]);
+    }
+    assert!(hit > 0, "entity {id:?} exists");
+    serde_json::from_value(value).expect("the retyped model deserializes")
+}
+
+#[test]
+fn the_same_reference_under_another_type_is_removed_plus_added_never_modified() {
+    let before = g1();
+    let hole = hole_ids(&before)[0];
+    let after = retyped_as_line(&before, hole);
+
+    let set = diff(&before, &after, DiffOptions::default());
+    let kinds: Vec<(&str, EntityId, &str)> = set
+        .changes
+        .iter()
+        .map(|c| match c {
+            Change::Removed(e) => ("REMOVED", e.id, e.entity_type.as_str()),
+            Change::Added(e) => ("ADDED", e.id, e.entity_type.as_str()),
+            Change::Modified(m) => ("MODIFIED", m.id, m.entity_type.as_str()),
+            Change::Unknown(u) => ("UNKNOWN", u.id, ""),
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [("REMOVED", hole, "CIRCLE"), ("ADDED", hole, "LINE")],
+        "{:?}",
+        set.changes
+    );
+}

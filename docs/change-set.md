@@ -51,14 +51,14 @@ The tolerances that were applied are written into the change set's header, so th
 
 | Mode | When | Matching key | In the result |
 |---|---|---|---|
-| `REFERENCE` | The two states share entity reference IDs (before and after an operation on the same model) | The reference ID, exactly as the model issued it -- this library defines no reference scheme of its own | A reference present in only one state is `ADDED` or `REMOVED` |
+| `REFERENCE` | The two states share entity reference IDs (before and after an operation on the same model) | The reference ID, exactly as the model issued it -- this library defines no reference scheme of its own | A reference present in only one state is `ADDED` or `REMOVED`. A reference held by entities of different types in the two states is `REMOVED` plus `ADDED`: no operation on one model changes an entity's type, so they are two entities that carry the same ID, not one entity's field changes |
 | `GEOMETRY` | The two states share no references (two revisions of a drawing) | Entity type plus shape, equal within tolerance | An uncertain correspondence is `UNKNOWN`; a moved entity is `REMOVED` plus `ADDED` |
 
 The header names the mode that produced the change set, so the same output cannot be read in two meanings.
 
 ### Geometric matching
 
-An entity's **shape** is every field of its model form except the `common` block (identity, provenance, confidence, layer, colour) and the type tag: the geometry and values that say what the entity *is*. Two entities have the same shape when they are of the same type and a field-by-field comparison (section 1, with the tolerance of section 2) finds no numeric field `BEYOND` and no non-numeric field different.
+An entity's **shape** is every field of its model form except the `common` block (identity, provenance, confidence, layer, colour) and the type tag: the geometry and values that say what the entity *is*. A nested entity -- an INSERT's attributes -- is part of the shape without its own `common` block. A counterpart pair is compared on every field but identity: the reference ID and source handle are never compared fields, in the entity's `common` block or a nested entity's. Two entities have the same shape when they are of the same type and a field-by-field comparison (section 1, with the tolerance of section 2) finds no numeric field `BEYOND` and no non-numeric field different.
 
 An entity `x` of the first state and `y` of the second are **counterparts** only when the match is certain both ways: `y` is the only entity of the second state with `x`'s shape, and `x` is the only entity of the first state with `y`'s. A counterpart pair is then compared on every field (so a layer or colour change, or a move within tolerance, is a `MODIFIED` entry with `counterpart` set). An entity with no candidate is `REMOVED` (first state) or `ADDED` (second state). Anything in between -- two candidates, or one candidate that is also another entity's only candidate -- is `UNKNOWN` for the entity of the first state, with every candidate listed; a likeliest pair is never chosen. Two coincident entities of which one was deleted are therefore two `UNKNOWN` entries, not a `REMOVED` and a match: which one went is not knowable from the geometry.
 
