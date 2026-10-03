@@ -31,8 +31,6 @@ struct Item<'a> {
     full: Value,
     /// The entity without its `common` block: what "shape" means here.
     shape: Value,
-    /// The shape's leaves, for scoring a pair whose shapes differ.
-    leaves: Leaves,
     key: SortKey,
     /// See [`anchor`].
     anchor: Option<[f64; 2]>,
@@ -42,7 +40,6 @@ impl<'a> Item<'a> {
     fn new(id: EntityId, entity: &'a Entity) -> Self {
         let full = serde_json::to_value(entity).expect("the model serializes");
         let shape = fields::shape(&full);
-        let leaves = fields::leaves(&shape);
         let key = SortKey::of(entity.type_name(), &full);
         let anchor = anchor(&full, &shape);
         Item {
@@ -50,7 +47,6 @@ impl<'a> Item<'a> {
             entity,
             full,
             shape,
-            leaves,
             key,
             anchor,
         }
@@ -376,17 +372,17 @@ impl Top {
     }
 }
 
-/// The leaf paths every entity of `items` holds with one and the same
-/// value: a fact about the type in these drawings, not about any one
-/// entity, so it tells no pair apart (a flat drawing's `z` and extrusion,
-/// a radius every hole shares).
-fn uninformative<'i, 'a: 'i>(items: impl Iterator<Item = &'i Item<'a>>) -> BTreeSet<String> {
-    // path -> (how many items hold it, the first value, whether all agree)
+/// The leaf paths every one of `leaves` holds with one and the same value:
+/// a fact about the type in these drawings, not about any one entity, so it
+/// tells no pair apart (a flat drawing's `z` and extrusion, a radius every
+/// hole shares).
+fn uninformative<'l>(leaves: impl Iterator<Item = &'l Leaves>) -> BTreeSet<String> {
+    // path -> (how many entities hold it, the first value, whether all agree)
     let mut seen: BTreeMap<&str, (usize, &Value, bool)> = BTreeMap::new();
     let mut n = 0;
-    for item in items {
+    for entity in leaves {
         n += 1;
-        for (path, value) in &item.leaves {
+        for (path, value) in entity {
             seen.entry(path)
                 .and_modify(|(count, first, same)| {
                     *count += 1;
@@ -466,22 +462,42 @@ fn pair_changed(
             continue;
         }
         budget -= pairs;
-        // Every entity of the type in both states, paired or not, decides
-        // which leaves say anything.
-        let flat = uninformative(
-            b.iter()
-                .chain(a.iter())
-                .filter(|item| item.key.entity_type == t),
-        );
-        let score =
-            |i: usize, j: usize| fields::similarity(&b[i].leaves, &a[j].leaves, tolerance, &flat);
+        // Shapes are flattened to leaves only here, for the types that are
+        // scored: most comparisons pair every entity by its shape and never
+        // get this far. Every entity of the type in both states, paired or
+        // not, decides which leaves say anything.
+        let of_type = |items: &[Item<'_>]| -> Vec<(usize, Leaves)> {
+            items
+                .iter()
+                .enumerate()
+                .filter(|(_, item)| item.key.entity_type == t)
+                .map(|(k, item)| (k, fields::leaves(&item.shape)))
+                .collect()
+        };
+        let (leaves_b, leaves_a) = (of_type(b), of_type(a));
+        let flat = uninformative(leaves_b.iter().chain(&leaves_a).map(|(_, l)| l));
+        // Both lists are in index order: an entity's leaves are found by search.
+        let find = |list: &[(usize, Leaves)], k: usize| -> usize {
+            list.binary_search_by_key(&k, |(index, _)| *index)
+                .expect("an entity of the type has its leaves")
+        };
+        let row_leaves: Vec<usize> = rs.iter().map(|&i| find(&leaves_b, i)).collect();
+        let column_leaves: Vec<usize> = cs.iter().map(|&j| find(&leaves_a, j)).collect();
+        let score = |r: usize, c: usize| {
+            fields::similarity(
+                &leaves_b[row_leaves[r]].1,
+                &leaves_a[column_leaves[c]].1,
+                tolerance,
+                &flat,
+            )
+        };
         let mut rows = vec![Top::new(); rs.len()];
         let mut columns = vec![Top::new(); cs.len()];
-        for (r, &i) in rs.iter().enumerate() {
-            for (c, &j) in cs.iter().enumerate() {
-                let s = score(i, j);
-                rows[r].offer(s, c);
-                columns[c].offer(s, r);
+        for (r, row) in rows.iter_mut().enumerate() {
+            for (c, column) in columns.iter_mut().enumerate() {
+                let s = score(r, c);
+                row.offer(s, c);
+                column.offer(s, r);
             }
         }
         for (r, &i) in rs.iter().enumerate() {
@@ -512,8 +528,8 @@ fn pair_changed(
             }
             // Listed by reference ID, each with its score.
             let mut listed: Vec<(EntityId, f64)> = Vec::new();
-            for &j in &cs {
-                let s = score(i, j);
+            for (c, &j) in cs.iter().enumerate() {
+                let s = score(r, c);
                 if s >= pairing.min_similarity {
                     out.spoken_for[j] = true;
                     listed.push((a[j].id, s));
