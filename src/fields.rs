@@ -22,19 +22,27 @@ const ANGLE_FIELDS: [&str; 4] = ["rotation", "start_angle", "end_angle", "angle"
 /// attributes).
 const IDENTITY_FIELDS: [&str; 2] = ["id", "source_handle"];
 
-/// Fields named by a save, not by the drawing, per entity type: a
-/// dimension's anonymous block (`*D3`) is renumbered when the file is saved
-/// again while the dimension stays as it was, and what that block draws is
-/// what the dimension's own fields already say. Neither part of the shape
-/// nor a compared field.
+/// Block references named by a save, not by the drawing, per entity type:
+/// a dimension's anonymous block (`*D3`) is renumbered when the file is
+/// saved again while the dimension stays as it was, and what that block
+/// draws is what the dimension's own fields already say. Such a reference
+/// is not part of the shape, and is not compared when both sides name an
+/// anonymous block. A named block is the drawing's own word and stays both:
+/// a dimension repointed to another named block, or between a named block
+/// and an anonymous one, is a change.
 const SAVE_ASSIGNED: [(&str, &str); 1] = [("DIMENSION", "block_name")];
 
-/// Whether `key` of an entity of type `entity_type` is in [`SAVE_ASSIGNED`].
-fn save_assigned(entity_type: Option<&Value>, key: &str) -> bool {
+/// Whether `value`, the field `key` of an entity of type `entity_type`, is
+/// a block reference a save names ([`SAVE_ASSIGNED`]): a resolved reference
+/// to an anonymous block, whose name starts with `*`.
+fn save_assigned(entity_type: Option<&Value>, key: &str, value: Option<&Value>) -> bool {
     let entity_type = entity_type.and_then(Value::as_str);
     SAVE_ASSIGNED
         .iter()
         .any(|&(t, k)| Some(t) == entity_type && k == key)
+        && value.is_some_and(|v| {
+            v["type"] == "RESOLVED" && v["data"].as_str().is_some_and(|n| n.starts_with('*'))
+        })
 }
 
 /// An entity's JSON form without its `common` block and type tag: the
@@ -48,10 +56,10 @@ pub fn shape(entity: &Value) -> Value {
         Value::Object(fields) => Value::Object(
             fields
                 .iter()
-                .filter(|(k, _)| {
+                .filter(|(k, v)| {
                     k.as_str() != "common"
                         && k.as_str() != "type"
-                        && !save_assigned(fields.get("type"), k)
+                        && !save_assigned(fields.get("type"), k, Some(v))
                 })
                 .map(|(k, v)| (k.clone(), without_common(v)))
                 .collect(),
@@ -108,14 +116,17 @@ fn walk(
     match (before, after) {
         (Value::Object(b), Value::Object(a)) => {
             // Identity fields are never compared -- see IDENTITY_FIELDS --
-            // and nor is a field a save names, of an entity whose type both
-            // sides share (SAVE_ASSIGNED).
+            // and nor is a reference both sides name an anonymous block by,
+            // of an entity whose type both sides share (SAVE_ASSIGNED).
             let mut keys: Vec<&String> = b.keys().chain(a.keys()).collect();
             keys.sort();
             keys.dedup();
             let entity_type = b.get("type").filter(|t| a.get("type") == Some(*t));
             for key in keys {
-                if path.is_empty() && save_assigned(entity_type, key) {
+                if path.is_empty()
+                    && save_assigned(entity_type, key, b.get(key))
+                    && save_assigned(entity_type, key, a.get(key))
+                {
                     continue;
                 }
                 if key == "common" {
@@ -214,6 +225,31 @@ fn is_angle(path: &str) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn only_a_dimension_block_named_by_a_save_on_both_sides_is_left_out() {
+        let dimension = |block: &str| {
+            json!({"type": "DIMENSION", "measurement": 10.0,
+                   "block_name": {"type": "RESOLVED", "data": block}})
+        };
+        let tol = Tolerance::default();
+        // Anonymous on both sides: a save renumbered it.
+        assert!(compare(&dimension("*D3"), &dimension("*D4"), tol).is_empty());
+        assert_eq!(shape(&dimension("*D3")), shape(&dimension("*D4")));
+        // A named block is the drawing's own word: repointing to or from one
+        // is a change, compared and in the shape.
+        for (b, a) in [("*D3", "SECTION_MARK"), ("SECTION_MARK", "DETAIL_MARK")] {
+            let paths: Vec<String> = compare(&dimension(b), &dimension(a), tol)
+                .into_iter()
+                .map(|c| c.path)
+                .collect();
+            assert_eq!(paths, ["block_name.data"], "{b} -> {a}");
+            assert_ne!(shape(&dimension(b)), shape(&dimension(a)));
+        }
+        // An INSERT's block is never left out, anonymous or not.
+        let insert = |block: &str| json!({"type": "INSERT", "block_name": {"type": "RESOLVED", "data": block}});
+        assert_eq!(compare(&insert("*U1"), &insert("*U2"), tol).len(), 1);
+    }
 
     #[test]
     fn numeric_fields_get_a_delta_and_a_verdict_and_identity_is_never_compared() {
