@@ -11,6 +11,7 @@
 //! entity with no candidate at all is `REMOVED` or `ADDED`, which is what a
 //! move looks like here.
 
+use crate::blocks::AnonymousBlocks;
 use crate::change_set::{
     Change, ChangeSet, MatchedBy, Matching, Modified, Pairing, Tolerance, Unknown, Unscored,
     Verdict,
@@ -302,13 +303,20 @@ fn same_shape(x: &Item<'_>, y: &Item<'_>, tolerance: Tolerance) -> bool {
 }
 
 /// A counterpart pair, compared on every field; `None` when nothing differs.
+/// An INSERT repointed between two anonymous blocks that hold the same is
+/// not a change of its block ([`AnonymousBlocks`]).
 fn modified(
     x: &Item<'_>,
     y: &Item<'_>,
     tolerance: Tolerance,
+    blocks: &AnonymousBlocks<'_>,
     matched_by: Option<MatchedBy>,
 ) -> Option<Change> {
-    let fields = fields::compare(&x.full, &y.full, tolerance);
+    let fields = blocks.settle(
+        &x.full,
+        &y.full,
+        fields::compare(&x.full, &y.full, tolerance),
+    );
     if fields.is_empty() {
         return None;
     }
@@ -423,6 +431,7 @@ fn pair_changed(
     removed: &[usize],
     added: &[usize],
     tolerance: Tolerance,
+    blocks: &AnonymousBlocks<'_>,
     pairing: Pairing,
 ) -> Paired {
     let mut out = Paired {
@@ -521,7 +530,7 @@ fn pair_changed(
                     similarity: top.best,
                     runner_up,
                 };
-                if let Some(change) = modified(x, y, tolerance, Some(matched_by)) {
+                if let Some(change) = modified(x, y, tolerance, blocks, Some(matched_by)) {
                     out.entries.push((i, change));
                 }
                 continue;
@@ -607,6 +616,7 @@ pub fn diff(
     // sort is total and involves no hash, so the result does not depend on
     // anything but the two states.
     let candidates_b = candidates(&b, &a, tolerance);
+    let blocks = AnonymousBlocks::new(before, after, tolerance);
     let mut candidates_a: Vec<Vec<usize>> = vec![Vec::new(); a.len()];
     for (i, js) in candidates_b.iter().enumerate() {
         for &j in js {
@@ -625,7 +635,7 @@ pub fn diff(
                 removed.push(i);
                 None
             }
-            [j] if candidates_a[*j].len() == 1 => modified(x, &a[*j], tolerance, None),
+            [j] if candidates_a[*j].len() == 1 => modified(x, &a[*j], tolerance, &blocks, None),
             [j] => {
                 let others = candidates_a[*j].len() - 1;
                 Some(Change::Unknown(Unknown {
@@ -659,7 +669,7 @@ pub fn diff(
     let added: Vec<usize> = (0..a.len())
         .filter(|&j| candidates_a[j].is_empty())
         .collect();
-    let paired = pair_changed(&b, &a, &removed, &added, tolerance, pairing);
+    let paired = pair_changed(&b, &a, &removed, &added, tolerance, &blocks, pairing);
     for (i, change) in paired.entries {
         found[i] = Some(change);
     }

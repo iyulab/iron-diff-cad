@@ -27,6 +27,7 @@
 
 #![forbid(unsafe_code)]
 
+mod blocks;
 mod change_set;
 mod fields;
 mod geometry;

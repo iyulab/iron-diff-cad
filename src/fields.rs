@@ -33,12 +33,27 @@ const IDENTITY_FIELDS: [&str; 2] = ["id", "source_handle"];
 /// and an anonymous one, is a change.
 const SAVE_ASSIGNED: [(&str, &str); 1] = [("DIMENSION", "block_name")];
 
+/// Block references a save names whose block is the only place that says
+/// what the entity draws: an INSERT of an anonymous block (a dynamic
+/// block's current state, `*U24`) or a table's (`*T3`, its cells drawn) is
+/// renumbered by a save like a dimension's, but the entity's own fields do
+/// not say what the block holds. Such a reference is not part of the shape;
+/// it is compared, and a change of it between two anonymous blocks that
+/// hold the same entities is then left out by [`crate::blocks`].
+pub(crate) const CONTENT_ADDRESSED: [(&str, &str); 2] =
+    [("INSERT", "block_name"), ("ACAD_TABLE", "block_name")];
+
 /// Whether `value`, the field `key` of an entity of type `entity_type`, is
-/// a block reference a save names ([`SAVE_ASSIGNED`]): a resolved reference
-/// to an anonymous block, whose name starts with `*`.
-fn save_assigned(entity_type: Option<&Value>, key: &str, value: Option<&Value>) -> bool {
+/// a reference to an anonymous block -- a resolved one whose name starts
+/// with `*` -- in one of the `fields`.
+fn anonymous_in(
+    fields: &[(&str, &str)],
+    entity_type: Option<&Value>,
+    key: &str,
+    value: Option<&Value>,
+) -> bool {
     let entity_type = entity_type.and_then(Value::as_str);
-    SAVE_ASSIGNED
+    fields
         .iter()
         .any(|&(t, k)| Some(t) == entity_type && k == key)
         && value.is_some_and(|v| {
@@ -46,21 +61,28 @@ fn save_assigned(entity_type: Option<&Value>, key: &str, value: Option<&Value>) 
         })
 }
 
+/// Whether `value` is a block reference a save names ([`SAVE_ASSIGNED`]).
+fn save_assigned(entity_type: Option<&Value>, key: &str, value: Option<&Value>) -> bool {
+    anonymous_in(&SAVE_ASSIGNED, entity_type, key, value)
+}
+
 /// An entity's JSON form without its `common` block and type tag: the
 /// geometry and values that say what the entity *is*, as opposed to where
 /// it came from and what it is called. What geometric matching compares.
 /// A nested entity (an INSERT's attributes) is part of the shape without
 /// its own `common` block, for the same reason; so is a field a save names
-/// ([`SAVE_ASSIGNED`]).
+/// ([`SAVE_ASSIGNED`], [`CONTENT_ADDRESSED`]).
 pub fn shape(entity: &Value) -> Value {
     match entity {
         Value::Object(fields) => Value::Object(
             fields
                 .iter()
                 .filter(|(k, v)| {
+                    let ty = fields.get("type");
                     k.as_str() != "common"
                         && k.as_str() != "type"
-                        && !save_assigned(fields.get("type"), k, Some(v))
+                        && !save_assigned(ty, k, Some(v))
+                        && !anonymous_in(&CONTENT_ADDRESSED, ty, k, Some(v))
                 })
                 .map(|(k, v)| (k.clone(), without_common(v)))
                 .collect(),
@@ -342,9 +364,16 @@ mod tests {
             assert_eq!(paths, ["block_name.data"], "{b} -> {a}");
             assert_ne!(shape(&dimension(b)), shape(&dimension(a)));
         }
-        // An INSERT's block is never left out, anonymous or not.
+        // An INSERT's block is always compared -- whether two anonymous
+        // ones hold the same is for the blocks to say -- and an anonymous
+        // one is not part of the shape.
         let insert = |block: &str| json!({"type": "INSERT", "block_name": {"type": "RESOLVED", "data": block}});
         assert_eq!(compare(&insert("*U1"), &insert("*U2"), tol).len(), 1);
+        assert_eq!(shape(&insert("*U1")), shape(&insert("*U2")));
+        assert_ne!(shape(&insert("*U1")), shape(&insert("TITLE")));
+        assert_ne!(shape(&insert("PART")), shape(&insert("TITLE")));
+        let table = |block: &str| json!({"type": "ACAD_TABLE", "block_name": {"type": "RESOLVED", "data": block}});
+        assert_eq!(shape(&table("*T1")), shape(&table("*T2")));
     }
 
     #[test]

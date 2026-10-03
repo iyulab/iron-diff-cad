@@ -20,6 +20,12 @@ bumps the minor version.
 
 ### Changed
 
+- An INSERT or ACAD_TABLE whose `block_name` names an anonymous block on both sides (a dynamic
+  block's current state, `*U24` → `*U96`; a table's `*T`) is compared by what the two blocks hold: when they hold the same entities
+  in the same order within tolerance, and the same base point, the renumbering a save does is no
+  longer a `block_name` change -- nested anonymous blocks included, 20 deep. Blocks that hold
+  something else keep the change with both names. An anonymous `block_name` is no longer part of
+  an INSERT's or a table's shape, so geometric matching pairs them and then applies the same rule.
 - **Breaking:** `DiffOptions::default()` matches by `Matching::Auto`, no longer by reference: two
   unrelated drawings whose IDs coincide were paired into confident field changes. A caller that
   compares two states it knows are one drawing (before and after its own edit) asks for
