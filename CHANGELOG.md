@@ -26,6 +26,10 @@ bumps the minor version.
   longer a `block_name` change -- nested anonymous blocks included, 20 deep. Blocks that hold
   something else keep the change with both names. An anonymous `block_name` is no longer part of
   an INSERT's or a table's shape, so geometric matching pairs them and then applies the same rule.
+- An IMAGE's `definition` -- the image definition's handle, identity rather than content -- is no
+  longer part of its shape, and a change of it is left out when the two image definitions state the
+  same file, size and pixel size: an image whose definition was only renumbered read as a
+  `definition` change, and under geometric matching could not be paired by shape.
 - **Breaking:** `DiffOptions::default()` matches by `Matching::Auto`, no longer by reference: two
   unrelated drawings whose IDs coincide were paired into confident field changes. A caller that
   compares two states it knows are one drawing (before and after its own edit) asks for

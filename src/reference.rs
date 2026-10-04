@@ -1,9 +1,9 @@
 //! Matching by reference ID: the two states share the model's entity IDs,
 //! and those are the key, exactly as issued.
 
-use crate::blocks::AnonymousBlocks;
 use crate::change_set::{Change, ChangeSet, EntityRecord, Matching, Modified, Tolerance};
 use crate::fields;
+use crate::referents::Referents;
 use std::collections::BTreeMap;
 use uncad_model::model::{Entity, EntityId};
 use uncad_model::CadDatabase;
@@ -42,7 +42,7 @@ pub fn diff(before: &CadDatabase, after: &CadDatabase, tolerance: Tolerance) -> 
     ids.sort();
     ids.dedup();
 
-    let blocks = AnonymousBlocks::new(before, after, tolerance);
+    let referents = Referents::new(before, after, tolerance);
     let mut changes = Vec::new();
     for id in ids {
         match (b.get(&id), a.get(&id)) {
@@ -61,12 +61,12 @@ pub fn diff(before: &CadDatabase, after: &CadDatabase, tolerance: Tolerance) -> 
                 }
                 let bx = serde_json::to_value(x).expect("the model serializes");
                 let ay = serde_json::to_value(y).expect("the model serializes");
-                let fields = blocks.settle(&bx, &ay, fields::compare(&bx, &ay, tolerance));
+                let fields = referents.settle(&bx, &ay, fields::compare(&bx, &ay, tolerance));
                 if fields.is_empty() {
                     // Different as Rust values but not as compared fields
-                    // (e.g. a non-finite float, or an INSERT repointed
-                    // between two anonymous blocks that hold the same):
-                    // nothing to report.
+                    // (e.g. a non-finite float, or a reference repointed
+                    // between two objects that hold the same): nothing to
+                    // report.
                     continue;
                 }
                 changes.push(Change::Modified(Modified {

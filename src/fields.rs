@@ -33,27 +33,59 @@ const IDENTITY_FIELDS: [&str; 2] = ["id", "source_handle"];
 /// and an anonymous one, is a change.
 const SAVE_ASSIGNED: [(&str, &str); 1] = [("DIMENSION", "block_name")];
 
-/// Block references a save names whose block is the only place that says
-/// what the entity draws: an INSERT of an anonymous block (a dynamic
-/// block's current state, `*U24`) or a table's (`*T3`, its cells drawn) is
-/// renumbered by a save like a dimension's, but the entity's own fields do
-/// not say what the block holds. Such a reference is not part of the shape;
-/// it is compared, and a change of it between two anonymous blocks that
-/// hold the same entities is then left out by [`crate::blocks`].
-pub(crate) const CONTENT_ADDRESSED: [(&str, &str); 2] =
-    [("INSERT", "block_name"), ("ACAD_TABLE", "block_name")];
+/// What a reference compared by content points at ([`BY_CONTENT`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Referent {
+    /// A block whose name starts with `*`: the save numbers it.
+    AnonymousBlock,
+    /// An IMAGEDEF, named by its handle -- identity, never content.
+    ImageDefinition,
+}
+
+/// References whose name is the save's while what the entity draws is in
+/// the object they point at, per entity type: an INSERT of an anonymous
+/// block (a dynamic block's current state, `*U24`) or a table's (`*T3`,
+/// its cells drawn), renumbered by a save like a dimension's block but
+/// with nothing of the block in the entity's own fields; and an IMAGE's
+/// definition, named by a handle. Such a reference is not part of the
+/// shape; it is compared, and a change of it between two objects that hold
+/// the same is then left out ([`crate::referents`]). A named block is the
+/// drawing's own word and stays both.
+const BY_CONTENT: [(&str, &str, Referent); 3] = [
+    ("INSERT", "block_name", Referent::AnonymousBlock),
+    ("ACAD_TABLE", "block_name", Referent::AnonymousBlock),
+    ("IMAGE", "definition", Referent::ImageDefinition),
+];
+
+/// The fields of `entity`'s type that may refer by content ([`BY_CONTENT`]).
+pub(crate) fn by_content_keys(
+    entity: &Value,
+) -> impl Iterator<Item = (&'static str, Referent)> + '_ {
+    BY_CONTENT
+        .iter()
+        .filter(move |(t, _, _)| entity.get("type").and_then(Value::as_str) == Some(*t))
+        .map(|&(_, k, r)| (k, r))
+}
+
+/// What the field `key` of `entity` points at, when it is a resolved
+/// reference compared by content ([`BY_CONTENT`]): for a block, only an
+/// anonymous one.
+pub(crate) fn by_content(entity: &Value, key: &str) -> Option<Referent> {
+    let (_, kind) = by_content_keys(entity).find(|&(k, _)| k == key)?;
+    let value = entity.get(key)?;
+    let name = (value["type"] == "RESOLVED").then(|| value["data"].as_str())??;
+    match kind {
+        Referent::AnonymousBlock if !name.starts_with('*') => None,
+        _ => Some(kind),
+    }
+}
 
 /// Whether `value`, the field `key` of an entity of type `entity_type`, is
-/// a reference to an anonymous block -- a resolved one whose name starts
-/// with `*` -- in one of the `fields`.
-fn anonymous_in(
-    fields: &[(&str, &str)],
-    entity_type: Option<&Value>,
-    key: &str,
-    value: Option<&Value>,
-) -> bool {
+/// a block reference a save names ([`SAVE_ASSIGNED`]): a resolved reference
+/// to an anonymous block, whose name starts with `*`.
+fn save_assigned(entity_type: Option<&Value>, key: &str, value: Option<&Value>) -> bool {
     let entity_type = entity_type.and_then(Value::as_str);
-    fields
+    SAVE_ASSIGNED
         .iter()
         .any(|&(t, k)| Some(t) == entity_type && k == key)
         && value.is_some_and(|v| {
@@ -61,28 +93,22 @@ fn anonymous_in(
         })
 }
 
-/// Whether `value` is a block reference a save names ([`SAVE_ASSIGNED`]).
-fn save_assigned(entity_type: Option<&Value>, key: &str, value: Option<&Value>) -> bool {
-    anonymous_in(&SAVE_ASSIGNED, entity_type, key, value)
-}
-
 /// An entity's JSON form without its `common` block and type tag: the
 /// geometry and values that say what the entity *is*, as opposed to where
 /// it came from and what it is called. What geometric matching compares.
 /// A nested entity (an INSERT's attributes) is part of the shape without
 /// its own `common` block, for the same reason; so is a field a save names
-/// ([`SAVE_ASSIGNED`], [`CONTENT_ADDRESSED`]).
+/// ([`SAVE_ASSIGNED`], [`BY_CONTENT`]).
 pub fn shape(entity: &Value) -> Value {
     match entity {
         Value::Object(fields) => Value::Object(
             fields
                 .iter()
                 .filter(|(k, v)| {
-                    let ty = fields.get("type");
                     k.as_str() != "common"
                         && k.as_str() != "type"
-                        && !save_assigned(ty, k, Some(v))
-                        && !anonymous_in(&CONTENT_ADDRESSED, ty, k, Some(v))
+                        && !save_assigned(fields.get("type"), k, Some(v))
+                        && by_content(entity, k).is_none()
                 })
                 .map(|(k, v)| (k.clone(), without_common(v)))
                 .collect(),
@@ -366,7 +392,8 @@ mod tests {
         }
         // An INSERT's block is always compared -- whether two anonymous
         // ones hold the same is for the blocks to say -- and an anonymous
-        // one is not part of the shape.
+        // one is not part of the shape. Nor is an image's definition, named
+        // by handle.
         let insert = |block: &str| json!({"type": "INSERT", "block_name": {"type": "RESOLVED", "data": block}});
         assert_eq!(compare(&insert("*U1"), &insert("*U2"), tol).len(), 1);
         assert_eq!(shape(&insert("*U1")), shape(&insert("*U2")));
@@ -374,6 +401,9 @@ mod tests {
         assert_ne!(shape(&insert("PART")), shape(&insert("TITLE")));
         let table = |block: &str| json!({"type": "ACAD_TABLE", "block_name": {"type": "RESOLVED", "data": block}});
         assert_eq!(shape(&table("*T1")), shape(&table("*T2")));
+        let image =
+            |def: &str| json!({"type": "IMAGE", "definition": {"type": "RESOLVED", "data": def}});
+        assert_eq!(shape(&image("80F")), shape(&image("A0F")));
     }
 
     #[test]

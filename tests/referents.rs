@@ -1,9 +1,9 @@
-//! An INSERT of an anonymous block is compared by what the block holds: a
-//! save renumbers anonymous blocks, so two names say nothing, and the two
-//! blocks' entities say everything.
+//! A reference whose name is the save's is compared by what it points at:
+//! an INSERT's anonymous block by the entities it holds, an IMAGE's
+//! definition (named by handle) by the file and size it states.
 
 use iron_diff_cad::{diff, Change, ChangeSet, DiffOptions, Matching};
-use serde_json::Value;
+use serde_json::{json, Value};
 use uncad_model::CadDatabase;
 
 /// G1's title-block INSERT (listed in the drawing and under model space).
@@ -205,4 +205,73 @@ fn the_comparison_is_deterministic() {
     let once = diff(&before, &after, options(Matching::Reference));
     let again = diff(&before, &after, options(Matching::Reference));
     assert_eq!(once.to_json(false).unwrap(), again.to_json(false).unwrap());
+}
+
+/// G1 with one IMAGE in model space showing image definition `handle`,
+/// which states `file`.
+fn with_image(handle: &str, file: &str) -> CadDatabase {
+    let mut v = g1();
+    let image = json!({"type": "IMAGE", "common": {"id": 9000, "origin": "VECTOR",
+        "confidence": "HIGH", "source_handle": {"type": "RESOLVED", "data": "2328"},
+        "layer": {"type": "RESOLVED", "data": "0"}, "color_index": 256,
+        "true_color": null, "invisible": false, "linetype": {"type": "BY_LAYER"},
+        "linetype_scale": 1.0, "lineweight": -1, "transparency": null},
+        "insertion_point": {"x": 10.0, "y": 20.0, "z": 0.0},
+        "u_vector": {"x": 0.03, "y": 0.0, "z": 0.0},
+        "v_vector": {"x": 0.0, "y": 0.03, "z": 0.0},
+        "size_pixels": {"x": 300.0, "y": 168.0},
+        "definition": {"type": "RESOLVED", "data": handle},
+        "display_flags": 7, "clipping": false, "brightness": 50, "contrast": 50,
+        "fade": 0, "clip_outside": false, "boundary": []});
+    v["entities"].as_array_mut().unwrap().push(image.clone());
+    v["tables"]["block_records"]["*Model_Space"]["entities"]
+        .as_array_mut()
+        .unwrap()
+        .push(image);
+    v["tables"]["image_definitions"] = json!({handle: {"file_path": file,
+        "size_pixels": {"x": 300.0, "y": 168.0},
+        "pixel_size": {"x": 0.0033333333333333, "y": 0.0033333333333333},
+        "loaded": true, "resolution_unit": "UNITLESS"}});
+    model(v)
+}
+
+fn image_fields(set: &ChangeSet) -> Option<Vec<String>> {
+    set.changes.iter().find_map(|c| match c {
+        Change::Modified(m) if m.entity_type == "IMAGE" => {
+            Some(m.fields.iter().map(|f| f.path.clone()).collect())
+        }
+        _ => None,
+    })
+}
+
+#[test]
+fn an_image_definition_with_another_handle_and_the_same_file_is_no_change() {
+    let before = with_image("80F", "parts/plate.png");
+    let after = with_image("A0F", "parts/plate.png");
+    for matching in [Matching::Reference, Matching::Geometry] {
+        let set = diff(&before, &after, options(matching));
+        assert!(
+            set.changes.is_empty(),
+            "{matching:?}: {:?}",
+            set.changes.first()
+        );
+    }
+}
+
+#[test]
+fn an_image_definition_that_names_another_file_keeps_both_handles() {
+    let before = with_image("80F", "parts/plate.png");
+    let after = with_image("A0F", "parts/bracket.png");
+    let set = diff(&before, &after, options(Matching::Reference));
+    assert_eq!(
+        image_fields(&set),
+        Some(vec!["definition.data".to_string()])
+    );
+    // Geometric matching pairs the image by its shape, which leaves the
+    // handle out, and reports the same.
+    let set = diff(&before, &after, options(Matching::Geometry));
+    assert_eq!(
+        image_fields(&set),
+        Some(vec!["definition.data".to_string()])
+    );
 }

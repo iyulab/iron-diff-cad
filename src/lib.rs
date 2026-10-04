@@ -27,12 +27,12 @@
 
 #![forbid(unsafe_code)]
 
-mod blocks;
 mod change_set;
 mod fields;
 mod geometry;
 pub mod lineage;
 mod reference;
+mod referents;
 
 pub use change_set::{
     Change, ChangeSet, EntityRecord, FieldChange, MatchedBy, Matching, Modified, Omit, Omitted,
