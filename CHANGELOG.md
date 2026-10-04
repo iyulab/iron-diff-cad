@@ -7,6 +7,8 @@ bumps the minor version.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-04
+
 ### Added
 
 - `lineage(&before, &after, threshold)` and the change set's `lineage`: whether two states are one
@@ -17,15 +19,30 @@ bumps the minor version.
 - `Matching::Auto`: reference matching when the lineage is `SAME`, geometric matching otherwise.
   The change set's `matching` is always the mode used. `DiffOptions::shared_threshold` sets the
   share of shared IDs `SAME` asks for (`DEFAULT_SHARED_THRESHOLD`, a half).
+- Geometric matching pairs entities whose shape changed. After the entities whose shapes agree are
+  paired, an entity left without a counterpart is scored against those of its type left in the
+  other state: the share of their informative leaf values that agree within tolerance (a leaf
+  every entity of the type holds with one value tells none apart and is not counted). A pair is
+  taken when its similarity reaches `min_similarity`, each is the other's single highest score,
+  and the next highest score of either is at least `min_margin` lower; it is `MODIFIED`, with
+  `Modified::matched_by` (`MatchedBy`: the similarity and the runner-up). Short of that, with
+  candidates at the threshold, the entity is `UNKNOWN` with `Unknown::similarities`; a tie is
+  never broken.
+- `DiffOptions::pairing` (`Pairing`: `min_similarity` 0.5, `min_margin` 0.1, `max_pairs` ten
+  million) and the change set's `pairing`, the values used under geometric matching. A
+  `min_similarity` above 1 pairs by equal shape only, as before.
+- `ChangeSet::unscored` (`Unscored`): an entity type whose left-over entities would take more
+  scored pairs than `max_pairs` leaves, with that count. Its entities stay `REMOVED` and `ADDED`.
 
 ### Changed
 
 - An INSERT or ACAD_TABLE whose `block_name` names an anonymous block on both sides (a dynamic
-  block's current state, `*U24` → `*U96`; a table's `*T`) is compared by what the two blocks hold: when they hold the same entities
-  in the same order within tolerance, and the same base point, the renumbering a save does is no
-  longer a `block_name` change -- nested anonymous blocks included, 20 deep. Blocks that hold
-  something else keep the change with both names. An anonymous `block_name` is no longer part of
-  an INSERT's or a table's shape, so geometric matching pairs them and then applies the same rule.
+  block's current state, `*U24` → `*U96`; a table's `*T`) is compared by what the two blocks hold:
+  when they hold the same entities in the same order within tolerance, and the same base point,
+  the renumbering a save does is no longer a `block_name` change -- nested anonymous blocks
+  included, 20 deep. Blocks that hold something else keep the change with both names. An anonymous
+  `block_name` is no longer part of an INSERT's or a table's shape, so geometric matching pairs
+  them and then applies the same rule.
 - An IMAGE's `definition` -- the image definition's handle, identity rather than content -- is no
   longer part of its shape, and a change of it is left out when the two image definitions state the
   same file, size and pixel size: an image whose definition was only renumbered read as a
@@ -33,7 +50,12 @@ bumps the minor version.
 - **Breaking:** `DiffOptions::default()` matches by `Matching::Auto`, no longer by reference: two
   unrelated drawings whose IDs coincide were paired into confident field changes. A caller that
   compares two states it knows are one drawing (before and after its own edit) asks for
-  `Matching::Reference`. `Matching` has a new variant and `DiffOptions` a new field.
+  `Matching::Reference`. `Matching` has a new variant, and `DiffOptions` two new fields,
+  `shared_threshold` and `pairing`: a struct literal adds them, or `..DiffOptions::default()`.
+- Under geometric matching, an entity whose shape changed (a resized hole, a moved line) is
+  `MODIFIED` when the pairing above singles out its counterpart, no longer `REMOVED` and `ADDED`.
+- Built on `uncad-model` 0.4.0 (a multileader's line type and content; the header's drawing
+  identifiers).
 
 ### Fixed
 
