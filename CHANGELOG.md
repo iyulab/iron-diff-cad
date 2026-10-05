@@ -7,6 +7,13 @@ bumps the minor version.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-05
+
+### Changed
+
+- Built on `uncad-model` 0.5.0: a table's grid is one of its fields, so a change to a table's
+  cells is a field change of the table.
+
 ## [0.4.0] - 2026-10-04
 
 ### Added
