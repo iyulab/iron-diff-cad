@@ -1,6 +1,6 @@
 [package]
 name = "iron-diff-cad"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 # Minimum supported Rust version. Measured, not guessed, and checked by CI's
 # `msrv` job with exactly this toolchain -- raise the two together.
@@ -27,7 +27,7 @@ iter_over_hash_type = "warn"
 [dependencies]
 # The model both states are expressed in. A version dependency, never a path:
 # this crate must build from a standalone checkout.
-uncad-model = "0.8.0"
+uncad-model = "0.9.0"
 serde = { version = "1.0.229", features = ["derive"] }
 # The model's own JSON form is the field-level view this crate compares.
 serde_json = { version = "1.0.151", features = ["float_roundtrip"] }
