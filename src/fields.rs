@@ -241,6 +241,7 @@ fn walk(
                     tolerance: Some(tol),
                     verdict,
                     unstated: None,
+                    format_only: false,
                 },
             );
         }
@@ -256,6 +257,7 @@ fn walk(
                         tolerance: None,
                         verdict: Verdict::Beyond,
                         unstated: unstated(before_at, after_at),
+                        format_only: false,
                     },
                 );
             }

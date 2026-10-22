@@ -34,6 +34,7 @@ mod geometry;
 pub mod lineage;
 mod reference;
 mod referents;
+mod text;
 
 pub use change_set::{
     Change, ChangeSet, EntityRecord, FieldChange, MatchedBy, Matching, Modified, Omit, Omitted,
@@ -87,6 +88,7 @@ pub fn diff(before: &CadDatabase, after: &CadDatabase, options: DiffOptions) -> 
     };
     set.lineage = Some(lineage);
     mark_undrawn(&mut set, before, after);
+    text::mark_format_only(&mut set);
     set
 }
 

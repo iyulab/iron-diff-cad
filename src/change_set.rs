@@ -159,6 +159,13 @@ pub struct FieldChange {
     /// was stated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unstated: Option<Side>,
+    /// For a text field, the two strings differ only in formatting codes
+    /// -- an MTEXT paragraph or font switch, a `{}` group, an underline
+    /// toggle -- and read the same, character for character, as the model's
+    /// text codes split them (contract, section 1). The verdict stays
+    /// `BEYOND`: the stored strings do differ. Absent otherwise.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub format_only: bool,
 }
 
 /// An entity named by a change: its identity and markers.

@@ -10,6 +10,7 @@ bumps the minor version.
 ### Added
 
 - `undrawn` on `ADDED`, `REMOVED` and `MODIFIED` entries: the entity sits only in block definitions nothing drawn refers to, directly or through other blocks, so no picture of the drawing shows the change. Saving a drawing again often drops anonymous dimension blocks no dimension points at; their entities are reported as removed, and now say so. Absent when the entity is drawn.
+- `format_only` on a field change of a text field (TEXT, ATTRIB, ATTDEF, MTEXT, TOLERANCE, a dimension's literal text, a multileader's text, an INSERT's attributes): the two strings differ only in formatting codes -- property switches, toggles, `{}` groups -- and read the same. A drawing saved again often states an MTEXT paragraph alignment the older save left out. The verdict stays `BEYOND`.
 
 ## [0.9.1] - 2026-10-22
 
