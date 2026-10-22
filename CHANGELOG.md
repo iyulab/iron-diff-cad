@@ -7,6 +7,8 @@ bumps the minor version.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-22
+
 ### Fixed
 
 - A text's slant (`oblique_angle`), a dimension's text rotation (`text_rotation`) and a layout view's twist (`twist`) are compared with the angle tolerance. They are radians, and were compared with the length tolerance, so a turn smaller than the length tolerance was reported as within it.
