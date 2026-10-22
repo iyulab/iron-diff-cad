@@ -28,6 +28,7 @@
 #![forbid(unsafe_code)]
 
 mod change_set;
+mod drawn;
 mod fields;
 mod geometry;
 pub mod lineage;
@@ -85,5 +86,26 @@ pub fn diff(before: &CadDatabase, after: &CadDatabase, options: DiffOptions) -> 
         Matching::Reference | Matching::Auto => reference::diff(before, after, options.tolerance),
     };
     set.lineage = Some(lineage);
+    mark_undrawn(&mut set, before, after);
     set
+}
+
+/// Marks every change about an entity no picture of its state shows
+/// ([`EntityRecord::undrawn`]): an `ADDED` or `REMOVED` entity held only in
+/// block definitions nothing drawn refers to in its state, and a `MODIFIED`
+/// one held so in both.
+fn mark_undrawn(set: &mut ChangeSet, before: &CadDatabase, after: &CadDatabase) {
+    let undrawn_before = drawn::undrawn(before);
+    let undrawn_after = drawn::undrawn(after);
+    for change in &mut set.changes {
+        match change {
+            Change::Removed(e) => e.undrawn = undrawn_before.contains(&e.id),
+            Change::Added(e) => e.undrawn = undrawn_after.contains(&e.id),
+            Change::Modified(m) => {
+                let after_id = m.counterpart.unwrap_or(m.id);
+                m.undrawn = undrawn_before.contains(&m.id) && undrawn_after.contains(&after_id);
+            }
+            Change::Unknown(_) => {}
+        }
+    }
 }

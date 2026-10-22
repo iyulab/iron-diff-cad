@@ -170,6 +170,12 @@ pub struct EntityRecord {
     pub entity_type: String,
     pub provenance: Origin,
     pub confidence: Confidence,
+    /// The entity sits only in block definitions nothing drawn refers to,
+    /// directly or through other blocks, in the state it is in: a change of
+    /// the model no picture of that state shows (contract, section 1).
+    /// Absent when the entity is drawn.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub undrawn: bool,
 }
 
 /// An entity present in both states with at least one differing field.
@@ -198,6 +204,15 @@ pub struct Modified {
     /// and under reference matching.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub matched_by: Option<MatchedBy>,
+    /// The entity sits only in block definitions nothing drawn refers to in
+    /// both states, so neither picture shows the change ([`EntityRecord::undrawn`]).
+    /// Absent when either state draws it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub undrawn: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// An entity of the first state whose counterpart in the second could not

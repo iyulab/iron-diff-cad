@@ -7,6 +7,10 @@ bumps the minor version.
 
 ## [Unreleased]
 
+### Added
+
+- `undrawn` on `ADDED`, `REMOVED` and `MODIFIED` entries: the entity sits only in block definitions nothing drawn refers to, directly or through other blocks, so no picture of the drawing shows the change. Saving a drawing again often drops anonymous dimension blocks no dimension points at; their entities are reported as removed, and now say so. Absent when the entity is drawn.
+
 ## [0.9.1] - 2026-10-22
 
 ### Fixed

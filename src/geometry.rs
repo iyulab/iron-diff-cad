@@ -332,6 +332,7 @@ fn modified(
             .min(y.entity.common().confidence),
         fields,
         matched_by,
+        undrawn: false,
     }))
 }
 
