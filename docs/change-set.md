@@ -36,7 +36,7 @@ A change set is complete: it lists every field that differs, within tolerance or
 
 ## 2. Tolerance
 
-Every numeric comparison uses a tolerance the caller stated or a default the result states -- there is no hidden epsilon (the defaults are `length = 1e-6` and `angle = 1e-9`). Lengths and angles have separate tolerances (`length` and `angle`), in the drawing's own units, since the model carries no unit. A field is an angle when the model documents it as one, which its name says: `rotation`, `start_angle`, `end_angle`, `angle`. Every other numeric field, including dimensionless ones such as scale factors and ratios, is compared with the length tolerance.
+Every numeric comparison uses a tolerance the caller stated or a default the result states -- there is no hidden epsilon (the defaults are `length = 1e-6` and `angle = 1e-9`). Lengths and angles have separate tolerances (`length` and `angle`), in the drawing's own units, since the model carries no unit. A field is an angle when the model documents it as one, which its name says: `rotation`, `start_angle`, `end_angle`, `angle`, `oblique_angle`, `text_rotation`, `twist`. Every other numeric field, including dimensionless ones such as scale factors and ratios, is compared with the length tolerance.
 
 The inequality is fixed:
 

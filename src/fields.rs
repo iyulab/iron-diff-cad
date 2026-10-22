@@ -12,9 +12,18 @@ use serde_json::Value;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Field names the model documents as angles (radians). Every other numeric
+/// Field names the model documents as angles (radians): rotations, arc and
+/// edge angles, a text's slant, a layout view's twist. Every other numeric
 /// field is compared with the length tolerance.
-const ANGLE_FIELDS: [&str; 4] = ["rotation", "start_angle", "end_angle", "angle"];
+const ANGLE_FIELDS: [&str; 7] = [
+    "rotation",
+    "start_angle",
+    "end_angle",
+    "angle",
+    "oblique_angle",
+    "text_rotation",
+    "twist",
+];
 
 /// Fields of `common` that are identity, not content: the reference ID is
 /// the matching key under reference matching, and the source handle is
@@ -437,6 +446,19 @@ mod tests {
         assert_eq!(changes[1].path, "text_height");
         assert_eq!(changes[1].tolerance, Some(1e-3));
         assert_eq!(changes[1].verdict, Verdict::Within);
+    }
+
+    #[test]
+    fn a_slant_a_text_rotation_and_a_twist_are_angles_too() {
+        let tol = Tolerance {
+            length: 1e-3,
+            angle: 1e-9,
+        };
+        for name in ["oblique_angle", "text_rotation", "twist"] {
+            let changes = compare(&json!({ name: 0.0 }), &json!({ name: 1e-5 }), tol);
+            assert_eq!(changes[0].tolerance, Some(1e-9), "{name}");
+            assert_eq!(changes[0].verdict, Verdict::Beyond, "{name}");
+        }
     }
 
     #[test]
