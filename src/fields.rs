@@ -11,19 +11,38 @@ use crate::change_set::{FieldChange, Side, Tolerance, Verdict};
 use serde_json::Value;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
+use uncad_model::{quantity_of_json, Quantity};
 
-/// Field names the model documents as angles (radians): rotations, arc and
-/// edge angles, a text's slant, a layout view's twist. Every other numeric
-/// field is compared with the length tolerance.
-const ANGLE_FIELDS: [&str; 7] = [
-    "rotation",
-    "start_angle",
-    "end_angle",
-    "angle",
-    "oblique_angle",
-    "text_rotation",
-    "twist",
-];
+/// What a numeric field is compared by, from the quantity the model states
+/// for it ([`quantity_of_json`]). `Some(tolerance)` for a size: an angle by
+/// the angle tolerance, every other size (a length, a ratio, a direction
+/// component) by the length tolerance; and for a number the model states
+/// nothing about, the length tolerance as before. `None` for a number that
+/// names or counts something -- an index, a count, a flag word -- which
+/// differs or does not: how far apart two color indexes are is not a size.
+fn tolerance_of(quantity: Option<Quantity>, tolerance: Tolerance) -> Option<f64> {
+    match quantity {
+        Some(Quantity::Angle) => Some(tolerance.angle),
+        Some(Quantity::Index | Quantity::Count | Quantity::Flag) => None,
+        _ => Some(tolerance.length),
+    }
+}
+
+/// The quantity of `path` when both states' entities agree on it. They
+/// disagree only for a dimension whose kind changed between a linear and an
+/// angular one; its `measurement` then has no one quantity, and is compared
+/// as a plain number with nothing stated.
+fn shared_quantity(roots: (&Value, &Value), path: &str) -> Option<Quantity> {
+    let (before, after) = (
+        quantity_of_json(roots.0, path),
+        quantity_of_json(roots.1, path),
+    );
+    if before == after {
+        before
+    } else {
+        None
+    }
+}
 
 /// Fields of `common` that are identity, not content: the reference ID is
 /// the matching key under reference matching, and the source handle is
@@ -145,7 +164,14 @@ fn without_common(value: &Value) -> Value {
 /// The fields that differ between `before` and `after`, ordered by path.
 pub fn compare(before: &Value, after: &Value, tolerance: Tolerance) -> Vec<FieldChange> {
     let mut out = BTreeMap::new();
-    walk("", Some(before), Some(after), tolerance, &mut out);
+    walk(
+        "",
+        Some(before),
+        Some(after),
+        (before, after),
+        tolerance,
+        &mut out,
+    );
     out.into_values().collect()
 }
 
@@ -159,11 +185,13 @@ fn join(prefix: &str, key: &str) -> String {
 
 /// Compares the values at `path`. `None` is a side with no value there at
 /// all -- no such key, or an array too short -- which is reported as `null`
-/// but, unlike a `null` the model wrote, is not "not stated".
+/// but, unlike a `null` the model wrote, is not "not stated". `roots` are the
+/// two entities' whole JSON forms, which a number's quantity may depend on.
 fn walk(
     path: &str,
     before_at: Option<&Value>,
     after_at: Option<&Value>,
+    roots: (&Value, &Value),
     tolerance: Tolerance,
     out: &mut BTreeMap<String, FieldChange>,
 ) {
@@ -199,18 +227,32 @@ fn walk(
                                 continue;
                             }
                             let at = join(&join(path, "common"), c);
-                            walk(&at, bc.get(c), ac.get(c), tolerance, out);
+                            walk(&at, bc.get(c), ac.get(c), roots, tolerance, out);
                         }
                         continue;
                     }
                 }
-                walk(&join(path, key), b.get(key), a.get(key), tolerance, out);
+                walk(
+                    &join(path, key),
+                    b.get(key),
+                    a.get(key),
+                    roots,
+                    tolerance,
+                    out,
+                );
             }
         }
         (Value::Array(b), Value::Array(a)) => {
             let n = b.len().max(a.len());
             for i in 0..n {
-                walk(&format!("{path}[{i}]"), b.get(i), a.get(i), tolerance, out);
+                walk(
+                    &format!("{path}[{i}]"),
+                    b.get(i),
+                    a.get(i),
+                    roots,
+                    tolerance,
+                    out,
+                );
             }
         }
         (Value::Number(b), Value::Number(a)) => {
@@ -220,12 +262,27 @@ fn walk(
             if bv == av {
                 return;
             }
-            let delta = (av - bv).abs();
-            let tol = if is_angle(path) {
-                tolerance.angle
-            } else {
-                tolerance.length
+            let quantity = shared_quantity(roots, path);
+            let Some(tol) = tolerance_of(quantity, tolerance) else {
+                // A name, a count, a flag word: it differs, and there is no
+                // size to say it by.
+                out.insert(
+                    path.to_string(),
+                    FieldChange {
+                        path: path.to_string(),
+                        before: before.clone(),
+                        after: after.clone(),
+                        delta: None,
+                        tolerance: None,
+                        verdict: Verdict::Beyond,
+                        unstated: None,
+                        format_only: false,
+                        quantity,
+                    },
+                );
+                return;
             };
+            let delta = (av - bv).abs();
             let verdict = if delta < tol {
                 Verdict::Within
             } else {
@@ -242,6 +299,7 @@ fn walk(
                     verdict,
                     unstated: None,
                     format_only: false,
+                    quantity,
                 },
             );
         }
@@ -258,6 +316,7 @@ fn walk(
                         verdict: Verdict::Beyond,
                         unstated: unstated(before_at, after_at),
                         format_only: false,
+                        quantity: None,
                     },
                 );
             }
@@ -308,6 +367,8 @@ pub fn similarity(
 ) -> f64 {
     let (mut agree, mut total) = (0usize, 0usize);
     let (mut i, mut j) = (0, 0);
+    // A number's quantity may depend on the dimension kind beside it.
+    let (roots_before, roots_after) = (kind_root(before), kind_root(after));
     while i < before.len() || j < after.len() {
         let order = match (before.get(i), after.get(j)) {
             (Some((p, _)), Some((q, _))) => p.cmp(q),
@@ -327,7 +388,10 @@ pub fn similarity(
                 let ((path, b), (_, a)) = (&before[i], &after[j]);
                 i += 1;
                 j += 1;
-                (path, leaf_agrees(path, b, a, tolerance))
+                (
+                    path,
+                    leaf_agrees(path, b, a, (&roots_before, &roots_after), tolerance),
+                )
             }
         };
         if !uninformative.contains(path) {
@@ -342,17 +406,29 @@ pub fn similarity(
     }
 }
 
+/// What a leaf list says of its entity that a number's quantity depends on:
+/// the `kind` leaf, as the entity object that would hold it.
+fn kind_root(leaves: &[(String, Value)]) -> Value {
+    match leaves.binary_search_by(|(path, _)| path.as_str().cmp("kind")) {
+        Ok(at) => serde_json::json!({ "kind": leaves[at].1 }),
+        Err(_) => Value::Null,
+    }
+}
+
 /// Whether two leaf values at `path` agree, as [`compare`] judges them.
-fn leaf_agrees(path: &str, before: &Value, after: &Value, tolerance: Tolerance) -> bool {
+fn leaf_agrees(
+    path: &str,
+    before: &Value,
+    after: &Value,
+    roots: (&Value, &Value),
+    tolerance: Tolerance,
+) -> bool {
     match (before, after) {
         (Value::Number(b), Value::Number(a)) => match (b.as_f64(), a.as_f64()) {
             (Some(bv), Some(av)) => {
-                let tol = if is_angle(path) {
-                    tolerance.angle
-                } else {
-                    tolerance.length
-                };
-                bv == av || (av - bv).abs() < tol
+                bv == av
+                    || tolerance_of(shared_quantity(roots, path), tolerance)
+                        .is_some_and(|tol| (av - bv).abs() < tol)
             }
             _ => b == a,
         },
@@ -368,12 +444,6 @@ fn unstated(before: Option<&Value>, after: Option<&Value>) -> Option<Side> {
         (Some(b), Some(Value::Null)) if !b.is_null() => Some(Side::After),
         _ => None,
     }
-}
-
-fn is_angle(path: &str) -> bool {
-    let last = path.rsplit('.').next().unwrap_or(path);
-    let last = last.split('[').next().unwrap_or(last);
-    ANGLE_FIELDS.contains(&last)
 }
 
 #[cfg(test)]
@@ -623,5 +693,87 @@ mod tests {
         let before = json!({"rotation": 0.0, "text_height": 0.0});
         let after = json!({"rotation": 1e-5, "text_height": 1e-5});
         assert_eq!(score(&before, &after, tol), 0.5);
+    }
+
+    #[test]
+    fn a_number_that_names_something_differs_without_a_size() {
+        let tol = Tolerance {
+            length: 10.0,
+            angle: 10.0,
+        };
+        let before = json!({ "type": "LINE", "common": { "color_index": 1, "lineweight": 25 } });
+        let after = json!({ "type": "LINE", "common": { "color_index": 2, "lineweight": 25 } });
+        let changes = compare(&before, &after, tol);
+        let [change] = changes.as_slice() else {
+            panic!("one field differs: {changes:?}");
+        };
+        assert_eq!(change.path, "common.color_index");
+        // Even a tolerance wider than the gap does not make color 2 the same as color 1.
+        assert_eq!(change.verdict, Verdict::Beyond);
+        assert_eq!((change.delta, change.tolerance), (None, None));
+        assert_eq!(change.quantity, Some(Quantity::Index));
+    }
+
+    #[test]
+    fn a_size_carries_the_quantity_it_was_compared_by() {
+        let tol = Tolerance {
+            length: 1e-3,
+            angle: 1e-6,
+        };
+        let before = json!({ "type": "ARC", "radius": 5.0, "start_angle": 0.0, "bulge": 0.5 });
+        let after =
+            json!({ "type": "ARC", "radius": 5.0005, "start_angle": 1e-7, "bulge": 0.5004 });
+        let changes = compare(&before, &after, tol);
+        let by_path = |path: &str| changes.iter().find(|c| c.path == path).expect(path);
+        assert_eq!(by_path("radius").quantity, Some(Quantity::Length));
+        assert_eq!(by_path("radius").tolerance, Some(1e-3));
+        assert_eq!(by_path("start_angle").quantity, Some(Quantity::Angle));
+        assert_eq!(by_path("start_angle").tolerance, Some(1e-6));
+        assert_eq!(by_path("start_angle").verdict, Verdict::Within);
+        // A ratio and a direction component are compared by the length tolerance, and say so.
+        assert_eq!(by_path("bulge").quantity, Some(Quantity::Ratio));
+        assert_eq!(by_path("bulge").tolerance, Some(1e-3));
+    }
+
+    #[test]
+    fn a_dimension_measurement_is_an_angle_for_an_angular_kind() {
+        let tol = Tolerance {
+            length: 1.0,
+            angle: 1e-9,
+        };
+        for (kind, quantity, tolerance) in [
+            ("ANGULAR2_LINE", Quantity::Angle, 1e-9),
+            ("ALIGNED", Quantity::Length, 1.0),
+        ] {
+            let before = json!({ "type": "DIMENSION", "kind": kind, "measurement": 0.5 });
+            let after = json!({ "type": "DIMENSION", "kind": kind, "measurement": 0.5001 });
+            let changes = compare(&before, &after, tol);
+            let change = &changes[0];
+            assert_eq!(change.quantity, Some(quantity), "{kind}");
+            assert_eq!(change.tolerance, Some(tolerance), "{kind}");
+        }
+        // A kind that changed between a linear and an angular one leaves the measurement with
+        // no one quantity: it is compared as a plain number, and says nothing of what it is.
+        let before = json!({ "type": "DIMENSION", "kind": "ALIGNED", "measurement": 0.5 });
+        let after = json!({ "type": "DIMENSION", "kind": "ANGULAR2_LINE", "measurement": 0.5001 });
+        let changes = compare(&before, &after, tol);
+        let measurement = changes
+            .iter()
+            .find(|c| c.path == "measurement")
+            .expect("differs");
+        assert_eq!(measurement.quantity, None);
+        assert_eq!(measurement.tolerance, Some(1.0));
+    }
+
+    #[test]
+    fn similarity_does_not_count_a_name_as_near_another_name() {
+        let tol = Tolerance {
+            length: 10.0,
+            angle: 10.0,
+        };
+        let before = leaves(&json!({ "color_index": 1, "radius": 5.0 }));
+        let after = leaves(&json!({ "color_index": 2, "radius": 5.5 }));
+        // The radius is within the wide tolerance; the color index is a different color.
+        assert_eq!(similarity(&before, &after, tol, &BTreeSet::new()), 0.5);
     }
 }

@@ -42,7 +42,7 @@ pub use change_set::{
 };
 pub use lineage::{lineage, Lineage, LineageVerdict, DEFAULT_SHARED_THRESHOLD};
 
-pub use uncad_model::CadDatabase;
+pub use uncad_model::{CadDatabase, Quantity};
 
 /// Options for [`diff`].
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -7,6 +7,14 @@ bumps the minor version.
 
 ## [Unreleased]
 
+### Added
+
+- `quantity` on a numeric field change: what the model states the field measures (`length`, `angle`, `ratio`, `direction`, `index`, `count`, `flag`), re-exported as `Quantity`.
+
+### Changed
+
+- The tolerance a numeric field is compared by follows the quantity the model states for it instead of a list of field names: an angle -- including a dimension's `measurement` when its kind is angular -- uses the angle tolerance, so an angle field added to the model is judged correctly without a change here. Breaking for results: a number that only names or counts something (a color index, a lineweight code, an id, a spline's degree, flag words) no longer carries a `delta` or a `tolerance` -- it is equal or `BEYOND` -- where it used to carry the numeric gap judged by the length tolerance. Requires `uncad-model` with `quantity_of_json`.
+
 ## [0.10.0] - 2026-10-27
 
 ### Added

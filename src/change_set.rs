@@ -166,6 +166,14 @@ pub struct FieldChange {
     /// `BEYOND`: the stored strings do differ. Absent otherwise.
     #[serde(default, skip_serializing_if = "is_false")]
     pub format_only: bool,
+    /// What a numeric field measures, as the model states it
+    /// (`uncad_model::Quantity`): a length, an angle, a ratio, a direction
+    /// component, or a number that only names or counts (an index, a count,
+    /// a flag word -- for those `delta` and `tolerance` are absent, since
+    /// the distance between two names is not a size). Absent for a field
+    /// that is not a number, and for a number the model states nothing about.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quantity: Option<uncad_model::Quantity>,
 }
 
 /// An entity named by a change: its identity and markers.
