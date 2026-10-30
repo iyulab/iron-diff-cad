@@ -7,6 +7,8 @@ bumps the minor version.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-30
+
 ### Added
 
 - `block` on `ADDED`, `REMOVED` and `MODIFIED` entries: the block definition the entity sits in, by the name the
