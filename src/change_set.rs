@@ -191,6 +191,15 @@ pub struct EntityRecord {
     /// Absent when the entity is drawn.
     #[serde(default, skip_serializing_if = "is_false")]
     pub undrawn: bool,
+    /// The block definition the entity sits in, in the state it is in:
+    /// the name the file gives the block (an anonymous block keeps its
+    /// `*` name). Absent for an entity of the drawing's own list or of a
+    /// layout (`*Model_Space`, `*Paper_Space…`) -- what a block reference
+    /// draws is named by that block, so a reader that knows which entity a
+    /// reference belongs to can tell a change of what it draws from the
+    /// reference's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block: Option<String>,
 }
 
 /// An entity present in both states with at least one differing field.
@@ -224,6 +233,11 @@ pub struct Modified {
     /// Absent when either state draws it.
     #[serde(default, skip_serializing_if = "is_false")]
     pub undrawn: bool,
+    /// The block definition the entity sits in in the first state, as for
+    /// [`EntityRecord::block`]. Absent for an entity of the drawing's own
+    /// list or of a layout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block: Option<String>,
 }
 
 fn is_false(value: &bool) -> bool {

@@ -333,6 +333,7 @@ fn modified(
         fields,
         matched_by,
         undrawn: false,
+        block: None,
     }))
 }
 

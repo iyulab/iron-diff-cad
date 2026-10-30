@@ -31,6 +31,7 @@ pub(crate) fn record(e: &Entity) -> EntityRecord {
         provenance: e.common().origin,
         confidence: e.common().confidence,
         undrawn: false,
+        block: None,
     }
 }
 
@@ -79,6 +80,7 @@ pub fn diff(before: &CadDatabase, after: &CadDatabase, tolerance: Tolerance) -> 
                     fields,
                     matched_by: None,
                     undrawn: false,
+                    block: None,
                 }));
             }
             (None, None) => unreachable!("an id came from one of the two maps"),

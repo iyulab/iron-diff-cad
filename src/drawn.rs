@@ -11,7 +11,7 @@
 //! in definitions nothing drawn refers to.
 
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use uncad_model::model::{Entity, EntityId};
 use uncad_model::CadDatabase;
 
@@ -56,6 +56,32 @@ pub(crate) fn undrawn(db: &CadDatabase) -> BTreeSet<EntityId> {
         .flat_map(|b| b.entities.iter())
         .map(|e| e.common().id)
         .filter(|id| !drawn.contains(id))
+        .collect()
+}
+
+/// The block definition each entity of `db` sits in, for the entities that
+/// sit in one that is not a layout. An entity of the drawing's own list, or
+/// of a layout, has none.
+pub(crate) fn blocks(db: &CadDatabase) -> BTreeMap<EntityId, String> {
+    let layout: BTreeSet<EntityId> = db
+        .tables
+        .block_records
+        .iter()
+        .filter(|(name, _)| is_layout(name))
+        .flat_map(|(_, block)| block.entities.iter().map(|e| e.common().id))
+        .chain(db.entities.iter().map(|e| e.common().id))
+        .collect();
+    db.tables
+        .block_records
+        .iter()
+        .filter(|(name, _)| !is_layout(name))
+        .flat_map(|(name, block)| {
+            block
+                .entities
+                .iter()
+                .map(move |e| (e.common().id, name.clone()))
+        })
+        .filter(|(id, _)| !layout.contains(id))
         .collect()
 }
 

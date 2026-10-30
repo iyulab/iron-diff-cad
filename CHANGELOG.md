@@ -7,6 +7,14 @@ bumps the minor version.
 
 ## [Unreleased]
 
+### Added
+
+- `block` on `ADDED`, `REMOVED` and `MODIFIED` entries: the block definition the entity sits in, by the name the
+  file gives it (an anonymous block keeps its `*` name) -- of the second state for an `ADDED` entity, of the first for the
+  others. Absent for an entity of the drawing's own list or of a layout (`*Model_Space`, `*Paper_Space...`). What a
+  table, a dimension or a block reference draws is named by its block, so a reader can tell a change of what a
+  reference draws from a change of the reference itself.
+
 ## [0.11.0] - 2026-10-30
 
 ### Added

@@ -88,8 +88,24 @@ pub fn diff(before: &CadDatabase, after: &CadDatabase, options: DiffOptions) -> 
     };
     set.lineage = Some(lineage);
     mark_undrawn(&mut set, before, after);
+    mark_blocks(&mut set, before, after);
     text::mark_format_only(&mut set);
     set
+}
+
+/// Names the block definition each changed entity sits in
+/// ([`EntityRecord::block`]): an `ADDED` entity in the second state, the
+/// others in the first.
+fn mark_blocks(set: &mut ChangeSet, before: &CadDatabase, after: &CadDatabase) {
+    let (blocks_before, blocks_after) = (drawn::blocks(before), drawn::blocks(after));
+    for change in &mut set.changes {
+        match change {
+            Change::Removed(e) => e.block = blocks_before.get(&e.id).cloned(),
+            Change::Added(e) => e.block = blocks_after.get(&e.id).cloned(),
+            Change::Modified(m) => m.block = blocks_before.get(&m.id).cloned(),
+            Change::Unknown(_) => {}
+        }
+    }
 }
 
 /// Marks every change about an entity no picture of its state shows
